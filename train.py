@@ -1,46 +1,44 @@
 # train.py
 import random
-from pathlib import Path
 
 import numpy as np
 import torch
 from torch.utils.tensorboard import SummaryWriter
 
-from src.dataset import build_coco_subset_loaders
-from src.model.vit import ViTDetBackbone
-from src.model.fpn import SimpleFeaturePyramid
-from src.model.detector import YoloHead, DetectionModel
+from src.dataset import build_folder_loaders, NUM_CLASSES, DATA_ROOT
+from src.model.build import build_model
 from src.losses.detection_loss import DetectionLoss
 from src.utils.tb_utils import evaluate_map, detection_images
 
 # ---------------- config ----------------
-IMG_SIZE = 320
-BATCH_SIZE = 8
-EPOCHS = 100         # pehle test ke liye 2 kar ke chala
+IMG_SIZE = 640
+BATCH_SIZE = 4            # OOM na aaye to 8 try kar
+EPOCHS = 1              # pehle 1-2 se time naap, phir set kar
 LR_BACKBONE = 1e-4
 LR_HEAD = 1e-3
 WEIGHT_DECAY = 0.05
+DROP_PATH = 0.1
+USE_P2 = False            # True = stride-4 level (evaluate.py / inference.py mein SAME rakhna)
 SEED = 42
-EVAL_EVERY = 5            # test mAP + detection images kitne epochs baad (sirf monitoring)
+EVAL_EVERY = 5            # val mAP + detection images kitne epochs baad
 NUM_WORKERS = 4
-DATA_ROOT = "/kaggle/temp/coco_subset" if Path("/kaggle").exists() else "data/coco_subset"
-LOG_DIR = "runs/coco3k_run1"
+
+TAG = f"wildlife_{IMG_SIZE}_{'p2' if USE_P2 else 'p3p5'}"
+LOG_DIR = f"runs/{TAG}"
+BEST_CKPT, LAST_CKPT = f"best_{TAG}.pt", f"last_{TAG}.pt"
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 random.seed(SEED); np.random.seed(SEED); torch.manual_seed(SEED)
 
 # ---------------- data ----------------
-train_loader, test_loader = build_coco_subset_loaders(
-    root=DATA_ROOT, batch_size=BATCH_SIZE, img_size=IMG_SIZE,
-    augment=True, num_workers=NUM_WORKERS)
-print(f"train: {len(train_loader.dataset)} images | test: {len(test_loader.dataset)} images")
+train_loader, val_loader, _ = build_folder_loaders(
+    DATA_ROOT, splits=("train", "val", "test"), batch_size=BATCH_SIZE,
+    img_size=IMG_SIZE, augment=True, num_workers=NUM_WORKERS)
+print(f"train: {len(train_loader.dataset)} | val: {len(val_loader.dataset)} images")
 
 # ---------------- model ----------------
-backbone = ViTDetBackbone(img_size=IMG_SIZE)
-neck = SimpleFeaturePyramid(in_ch=384, out_ch=128)
-head = YoloHead(num_classes=80, ch=(128, 128, 128))
-model = DetectionModel(backbone, neck, head).to(device)
-criterion = DetectionLoss(model)
+model = build_model(IMG_SIZE, NUM_CLASSES, use_p2=USE_P2, drop_path_rate=DROP_PATH).to(device)
+criterion = DetectionLoss(model)                 # model .to(device) ke BAAD
 
 optimizer = torch.optim.AdamW([
     {"params": model.backbone.parameters(), "lr": LR_BACKBONE},
@@ -71,6 +69,7 @@ def train_one_epoch():
     return total / n, items / n
 
 
+best_map = -1.0
 for epoch in range(1, EPOCHS + 1):
     tr_loss, it = train_one_epoch()
 
@@ -85,15 +84,20 @@ for epoch in range(1, EPOCHS + 1):
 
     print(f"epoch {epoch:3d} | loss {tr_loss:8.3f} (box {it[0]:.3f} cls {it[1]:.3f} dfl {it[2]:.3f})")
 
-    # ---- test mAP curves + detection images (monitoring only, isse kuch chunna nahi) ----
+    # ---- val mAP curves + detection images + best checkpoint ----
     if epoch % EVAL_EVERY == 0 or epoch == 1 or epoch == EPOCHS:
-        r = evaluate_map(model, test_loader, device, IMG_SIZE)
+        r = evaluate_map(model, val_loader, device, IMG_SIZE, conf=0.01)
         for k in ["map", "map_50", "map_75", "map_small", "map_medium", "map_large", "mar_100"]:
             writer.add_scalar(f"metrics/{k}", r[k].item(), epoch)
         writer.add_images("detections (green=GT, red=pred)",
-                          detection_images(model, test_loader, device, n=4, img_size=IMG_SIZE), epoch)
-        print(f"          mAP@0.5 {r['map_50'].item():.4f} | mAP {r['map'].item():.4f}")
-        torch.save(model.state_dict(), "last.pt")      # session toote to bhi bacha rahe
+                          detection_images(model, val_loader, device, n=4, img_size=IMG_SIZE), epoch)
+        print(f"          val mAP@0.5 {r['map_50'].item():.4f} | mAP {r['map'].item():.4f}")
 
-torch.save(model.state_dict(), "last.pt")
+        if r["map"].item() > best_map:
+            best_map = r["map"].item()
+            torch.save(model.state_dict(), BEST_CKPT)
+        torch.save(model.state_dict(), LAST_CKPT)      # session toote to bhi bacha rahe
+
+torch.save(model.state_dict(), LAST_CKPT)
 writer.close()
+print(f"best val mAP: {best_map:.4f} -> {BEST_CKPT}")

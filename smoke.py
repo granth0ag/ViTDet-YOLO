@@ -2,51 +2,59 @@
 import time
 import torch
 
-from src.dataset import build_dataloaders
-from src.model.vit import ViTDetBackbone
-from src.model.fpn import SimpleFeaturePyramid
-from src.model.detector import YoloHead, DetectionModel
+from src.dataset import build_folder_loaders, NUM_CLASSES, DATA_ROOT
+from src.model.build import build_model
 from src.losses.detection_loss import DetectionLoss
 try:
     from ultralytics.utils.nms import non_max_suppression
 except ImportError:
     from ultralytics.utils.ops import non_max_suppression
 
+# ---- train.py jaisa EXACT same rakh ----
+IMG_SIZE = 640
+USE_P2 = False
+BATCH_SIZE = 4
+DROP_PATH = 0.1
+EPOCHS = 60
+
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print("1) device:", device, "| torch", torch.__version__)
 
-# ---- data ----
-train_loader, _ = build_dataloaders(batch_size=8, img_size=320)
+# ---- data (augment=True, taaki augmentation path bhi test ho) ----
+(train_loader,) = build_folder_loaders(DATA_ROOT, splits=("train",), batch_size=BATCH_SIZE,
+                                       img_size=IMG_SIZE, augment=True, num_workers=2)
 images, targets, paths = next(iter(train_loader))
-print("2) data:", images.shape, "| targets:", len(targets), targets[0].shape)
+print("2) data:", tuple(images.shape), "| targets:", len(targets), tuple(targets[0].shape),
+      "| train steps/epoch:", len(train_loader))
 ids = torch.cat([t[:, 0] for t in targets])
-assert ids.min() >= 0 and ids.max() < 80, "class id range galat"
+assert ids.min() >= 0 and ids.max() < NUM_CLASSES, f"class id range galat: {ids.min()}..{ids.max()}"
+for t in targets:                                        # boxes normalized aur valid hone chahiye
+    if len(t):
+        assert (t[:, 1:] >= 0).all() and (t[:, 1:] <= 1).all(), "box coords [0,1] se bahar"
+        assert (t[:, 3:] > 0).all(), "zero/negative w ya h"
 
 # ---- model ----
-model = DetectionModel(
-    ViTDetBackbone(img_size=320),
-    SimpleFeaturePyramid(in_ch=384, out_ch=128),
-    YoloHead(num_classes=80, ch=(128, 128, 128)),
-).to(device)
+model = build_model(IMG_SIZE, NUM_CLASSES, use_p2=USE_P2, drop_path_rate=DROP_PATH).to(device)
 criterion = DetectionLoss(model)
-
 images = images.to(device)
+if device == "cuda":
+    torch.cuda.reset_peak_memory_stats()
 
 # ---- forward shapes ----
 model.train()
 feat = model.backbone(images)
-print("3) backbone:", feat.shape)                       # [8, 384, 20, 20]
-print("   neck    :", [p.shape for p in model.neck(feat)])
+print("3) backbone:", tuple(feat.shape))                # [B, 384, 40, 40]
+print("   neck    :", [tuple(p.shape) for p in model.neck(feat)])   # 80x80, 40x40, 20x20 (+160x160 agar P2)
 preds = model(images)
 if isinstance(preds, dict):                             # naye ultralytics
     print("   head keys:", list(preds.keys()))
     for k, v in preds.items():
         if torch.is_tensor(v):
             print(f"     {k}: {tuple(v.shape)}")
-        else:                                           # list of tensors (jaise feats)
+        else:
             print(f"     {k}:", [tuple(p.shape) for p in v])
-else:                                                   # purane versions: list of 3 maps
-    print("   head    :", [p.shape for p in preds])
+else:                                                   # purane versions
+    print("   head    :", [tuple(p.shape) for p in preds])
 
 # ---- loss + gradients ----
 loss, items = criterion(preds, targets, device)
@@ -65,6 +73,8 @@ opt = torch.optim.AdamW([
 ], weight_decay=0.05)
 
 print("5) overfit 1 batch, 40 steps")
+if device == "cuda":
+    torch.cuda.synchronize()
 t0 = time.time()
 for step in range(40):
     preds = model(images)
@@ -78,15 +88,19 @@ for step in range(40):
 if device == "cuda":
     torch.cuda.synchronize()
 dt = (time.time() - t0) / 40
-print(f"   {dt:.3f} s/step -> ~{dt * 16:.1f} s per coco128 epoch (16 steps)")
+epoch_s = dt * len(train_loader)
+print(f"   {dt:.3f} s/step -> ~{epoch_s:.0f} s/epoch -> ~{epoch_s * EPOCHS / 3600:.1f} h for {EPOCHS} epochs"
+      " (dataloading + eval ke bina, to asli time thoda zyada)")
+if device == "cuda":
+    print(f"   peak GPU memory: {torch.cuda.max_memory_allocated() / 1e9:.1f} GB")
 
 # ---- eval path ----
 model.eval()
 with torch.no_grad():
     y, _ = model(images)
-print("6) eval y:", y.shape)                            # [8, 84, 2100]
+print("6) eval y:", tuple(y.shape))                     # [B, 4+4, 8400]  (P2 ke saath 34000)
 dets = non_max_suppression(y, conf_thres=0.001, iou_thres=0.65)
-print("   NMS ok, dets per image:", [len(d) for d in dets][:4])
+print("   NMS ok, dets per image:", [len(d) for d in dets])
 
 # ---- checkpoint roundtrip ----
 torch.save(model.state_dict(), "smoke.pt")

@@ -8,31 +8,27 @@ try:
 except ImportError:
     from ultralytics.utils.ops import non_max_suppression
 
-from src.dataset import build_coco_subset_loaders
-from src.model.vit import ViTDetBackbone
-from src.model.fpn import SimpleFeaturePyramid
-from src.model.detector import YoloHead, DetectionModel
+from src.dataset import build_folder_loaders, NUM_CLASSES, CLASS_NAMES, DATA_ROOT
+from src.model.build import build_model
 
-# ---------------- config ----------------
-IMG_SIZE = 320
-BATCH_SIZE = 8
-CKPT = "last.pt"         # best.pt nahi: test se checkpoint chunna test leak hota
-CONF_THRES = 0.001       # mAP ke liye low rakhte hain, warna recall kat jaata hai
+# ---------------- config (IMG_SIZE aur USE_P2 train.py jaise EXACT same) ----------------
+IMG_SIZE = 640
+USE_P2 = False
+BATCH_SIZE = 4
+TAG = f"wildlife_{IMG_SIZE}_{'p2' if USE_P2 else 'p3p5'}"
+CKPT = f"best_{TAG}.pt"   # best val mAP wala checkpoint (val se chuna gaya, to test leak nahi)
+CONF_THRES = 0.001        # mAP ke liye low rakhte hain, warna recall kat jaata hai
 IOU_THRES = 0.65
-DATA_ROOT = "/kaggle/temp/coco_subset" if Path("/kaggle").exists() else "data/coco_subset"
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # ---------------- data (sirf test split) ----------------
-_, test_loader = build_coco_subset_loaders(
-    root=DATA_ROOT, batch_size=BATCH_SIZE, img_size=IMG_SIZE, augment=False, num_workers=2)
-print(f"test images: {len(test_loader.dataset)}")
+(test_loader,) = build_folder_loaders(
+    DATA_ROOT, splits=("test",), batch_size=BATCH_SIZE, img_size=IMG_SIZE,
+    augment=False, num_workers=2)
+print(f"test images: {len(test_loader.dataset)} | checkpoint: {CKPT}")
 
 # ---------------- model ----------------
-model = DetectionModel(
-    ViTDetBackbone(img_size=IMG_SIZE),
-    SimpleFeaturePyramid(in_ch=384, out_ch=128),
-    YoloHead(num_classes=80, ch=(128, 128, 128)),
-).to(device)
+model = build_model(IMG_SIZE, NUM_CLASSES, use_p2=USE_P2).to(device)
 model.load_state_dict(torch.load(CKPT, map_location=device))
 model.eval()
 
@@ -46,10 +42,11 @@ def targets_to_xyxy(t, size):
 
 @torch.no_grad()
 def evaluate():
-    metric = MeanAveragePrecision(box_format="xyxy", iou_type="bbox")
+    metric = MeanAveragePrecision(box_format="xyxy", iou_type="bbox", class_metrics=True)
+    metric.warn_on_many_detections = False
 
     for images, targets, _ in test_loader:
-        y, _ = model(images.to(device))                     # [B, 84, 2100], boxes xywh pixels
+        y, _ = model(images.to(device))                     # [B, 4+nc, anchors], boxes xywh pixels
         dets = non_max_suppression(y, conf_thres=CONF_THRES, iou_thres=IOU_THRES)
 
         preds, gts = [], []
@@ -70,7 +67,12 @@ if __name__ == "__main__":
     print(f"mAP@[.5:.95] : {r['map'].item():.4f}")
     print(f"mAP@0.5      : {r['map_50'].item():.4f}")
     print(f"mAP@0.75     : {r['map_75'].item():.4f}")
-    print(f"mAP small    : {r['map_small'].item():.4f}")
+    print(f"mAP small    : {r['map_small'].item():.4f}   (-1 = is size ka koi GT nahi)")
     print(f"mAP medium   : {r['map_medium'].item():.4f}")
     print(f"mAP large    : {r['map_large'].item():.4f}")
     print(f"mAR@100      : {r['mar_100'].item():.4f}")
+
+    if r["map_per_class"].numel() > 1:
+        print("per-class mAP@[.5:.95]:")
+        for c, ap in zip(r["classes"].tolist(), r["map_per_class"].tolist()):
+            print(f"  {CLASS_NAMES[c]:10s} {ap:.4f}")
