@@ -2,53 +2,55 @@
 import random
 import numpy as np
 import torch
+from torch.utils.tensorboard import SummaryWriter
 
 from src.dataset import build_dataloaders
 from src.model.vit import ViTDetBackbone
 from src.model.fpn import SimpleFeaturePyramid
 from src.model.detector import YoloHead, DetectionModel
 from src.losses.detection_loss import DetectionLoss
+from src.utils.tb_utils import evaluate_map, detection_images
 
 # ---------------- config ----------------
 IMG_SIZE = 320
 BATCH_SIZE = 8
 EPOCHS = 100
 LR_BACKBONE = 1e-4
-LR_HEAD = 1e-3          # neck + head
+LR_HEAD = 1e-3
 WEIGHT_DECAY = 0.05
 SEED = 42
+EVAL_EVERY = 5            # mAP + detection images kitne epochs baad
+LOG_DIR = "runs/coco128_overfit"
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 random.seed(SEED); np.random.seed(SEED); torch.manual_seed(SEED)
 
 # ---------------- data ----------------
-train_loader, _ = build_dataloaders(batch_size=BATCH_SIZE, img_size=IMG_SIZE, augment=False)
+train_loader, val_loader = build_dataloaders(batch_size=BATCH_SIZE, img_size=IMG_SIZE, augment=False)
 
 # ---------------- model ----------------
 backbone = ViTDetBackbone(img_size=IMG_SIZE)
 neck = SimpleFeaturePyramid(in_ch=384, out_ch=128)
 head = YoloHead(num_classes=80, ch=(128, 128, 128))
 model = DetectionModel(backbone, neck, head).to(device)
+criterion = DetectionLoss(model)
 
-criterion = DetectionLoss(model)                 # model .to(device) ke BAAD
-
-# ---------------- optimizer ----------------
 optimizer = torch.optim.AdamW([
     {"params": model.backbone.parameters(), "lr": LR_BACKBONE},
     {"params": model.neck.parameters(),     "lr": LR_HEAD},
     {"params": model.head.parameters(),     "lr": LR_HEAD},
 ], weight_decay=WEIGHT_DECAY)
-
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS)
 
+writer = SummaryWriter(LOG_DIR)
 
-# ---------------- training ----------------
+
 def train_one_epoch():
     model.train()
     total, items = 0.0, torch.zeros(3)
     for images, targets, _ in train_loader:
         images = images.to(device)
-        preds = model(images)                                    # 3 raw maps
+        preds = model(images)
         loss, loss_items = criterion(preds, targets, device)
 
         optimizer.zero_grad()
@@ -57,21 +59,38 @@ def train_one_epoch():
         optimizer.step()
 
         total += loss.item()
-        items += loss_items.cpu()
+        items += loss_items[:3].cpu()
     n = len(train_loader)
     return total / n, items / n
 
 
 best = float("inf")
 for epoch in range(1, EPOCHS + 1):
-    tr_loss, tr_items = train_one_epoch()
+    tr_loss, it = train_one_epoch()
+
+    # ---- loss + lr curves ----
+    writer.add_scalar("loss/total", tr_loss, epoch)
+    writer.add_scalar("loss/box", it[0], epoch)
+    writer.add_scalar("loss/cls", it[1], epoch)
+    writer.add_scalar("loss/dfl", it[2], epoch)
+    writer.add_scalar("lr/backbone", optimizer.param_groups[0]["lr"], epoch)
+    writer.add_scalar("lr/head", optimizer.param_groups[1]["lr"], epoch)
     scheduler.step()
 
-    print(f"epoch {epoch:3d} | loss {tr_loss:8.3f} "
-          f"(box {tr_items[0]:.3f} cls {tr_items[1]:.3f} dfl {tr_items[2]:.3f})")
+    print(f"epoch {epoch:3d} | loss {tr_loss:8.3f} (box {it[0]:.3f} cls {it[1]:.3f} dfl {it[2]:.3f})")
+
+    # ---- mAP curves + detection images ----
+    if epoch % EVAL_EVERY == 0 or epoch == 1 or epoch == EPOCHS:
+        r = evaluate_map(model, val_loader, device, IMG_SIZE)
+        for k in ["map", "map_50", "map_75", "map_small", "map_medium", "map_large", "mar_100"]:
+            writer.add_scalar(f"metrics/{k}", r[k].item(), epoch)
+        writer.add_images("detections (green=GT, red=pred)",
+                          detection_images(model, val_loader, device, n=4, img_size=IMG_SIZE), epoch)
+        print(f"          mAP@0.5 {r['map_50'].item():.4f} | mAP {r['map'].item():.4f}")
 
     if tr_loss < best:
         best = tr_loss
         torch.save(model.state_dict(), "best.pt")
 
 torch.save(model.state_dict(), "last.pt")
+writer.close()
