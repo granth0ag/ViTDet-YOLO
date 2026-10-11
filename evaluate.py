@@ -1,12 +1,14 @@
 # evaluate.py
+from pathlib import Path
+
 import torch
 from torchmetrics.detection import MeanAveragePrecision
 try:
     from ultralytics.utils.nms import non_max_suppression
-except ImportError:                                  
+except ImportError:
     from ultralytics.utils.ops import non_max_suppression
 
-from src.dataset import build_dataloaders
+from src.dataset import build_coco_subset_loaders
 from src.model.vit import ViTDetBackbone
 from src.model.fpn import SimpleFeaturePyramid
 from src.model.detector import YoloHead, DetectionModel
@@ -14,15 +16,16 @@ from src.model.detector import YoloHead, DetectionModel
 # ---------------- config ----------------
 IMG_SIZE = 320
 BATCH_SIZE = 8
-VAL_FRACTION = 0.0       # train.py wali value se match kar (0.0 -> same images, sanity check)
-CKPT = "best.pt"
+CKPT = "last.pt"         # best.pt nahi: test se checkpoint chunna test leak hota
 CONF_THRES = 0.001       # mAP ke liye low rakhte hain, warna recall kat jaata hai
 IOU_THRES = 0.65
+DATA_ROOT = "/kaggle/temp/coco_subset" if Path("/kaggle").exists() else "data/coco_subset"
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-# ---------------- data ----------------
-_, val_loader = build_dataloaders(batch_size=BATCH_SIZE, img_size=IMG_SIZE,
-                                  val_fraction=VAL_FRACTION)
+# ---------------- data (sirf test split) ----------------
+_, test_loader = build_coco_subset_loaders(
+    root=DATA_ROOT, batch_size=BATCH_SIZE, img_size=IMG_SIZE, augment=False, num_workers=2)
+print(f"test images: {len(test_loader.dataset)}")
 
 # ---------------- model ----------------
 model = DetectionModel(
@@ -45,7 +48,7 @@ def targets_to_xyxy(t, size):
 def evaluate():
     metric = MeanAveragePrecision(box_format="xyxy", iou_type="bbox")
 
-    for images, targets, _ in val_loader:
+    for images, targets, _ in test_loader:
         y, _ = model(images.to(device))                     # [B, 84, 2100], boxes xywh pixels
         dets = non_max_suppression(y, conf_thres=CONF_THRES, iou_thres=IOU_THRES)
 

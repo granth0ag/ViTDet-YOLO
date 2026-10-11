@@ -1,4 +1,4 @@
-# datasets.py
+# dataset.py
 import random
 import urllib.request
 import zipfile
@@ -23,7 +23,7 @@ def download_coco128(root="data"):
     dataset_dir = root / "coco128"
     if dataset_dir.exists():
         return dataset_dir
-    root.mkdir(parents=True, exist_ok=True)  # creates parent folder if missing, no-op if it exists
+    root.mkdir(parents=True, exist_ok=True)
     zip_path = root / "coco128.zip"
     urllib.request.urlretrieve(COCO128_URL, zip_path)
     with zipfile.ZipFile(zip_path) as zf:
@@ -41,7 +41,7 @@ class CocoDataset(Dataset):
     """
 
     def __init__(self, image_paths, img_size=IMG_SIZE, augment=False):
-        self.image_paths = list(image_paths)  # convert to list in case it's a generator
+        self.image_paths = list(image_paths)
         self.img_size = img_size
         self.augment = augment  # horizontal flip only
 
@@ -56,8 +56,13 @@ class CocoDataset(Dataset):
 
     @staticmethod
     def read_labels(image_path):
-        """Read the matching YOLO .txt file -> array [N, 5]."""
-        label_path = Path(str(image_path).replace("images", "labels")).with_suffix(".txt")
+        """Read the matching YOLO .txt file -> array [N, 5].
+        .../images/<split>/x.jpg  ->  .../labels/<split>/x.txt (sirf last 'images' folder badalta hai)"""
+        parts = list(Path(image_path).parts)
+        i = len(parts) - 1 - parts[::-1].index("images")
+        parts[i] = "labels"
+        label_path = Path(*parts).with_suffix(".txt")
+
         if not label_path.exists():
             return np.zeros((0, 5), dtype=np.float32)
         rows = [list(map(float, line.split()))
@@ -93,9 +98,7 @@ class CocoDataset(Dataset):
             canvas = canvas.transpose(Image.FLIP_LEFT_RIGHT)
             target[:, 1] = 1.0 - target[:, 1]
 
-        # to tensor + normalize
         image = self.transform(canvas)
-
         return image, torch.from_numpy(target), str(path)
 
 
@@ -107,11 +110,7 @@ def collate_fn(batch):
 
 def build_dataloaders(root="data", batch_size=8, img_size=IMG_SIZE, val_fraction=0.0,
                       augment=False, num_workers=0, seed=42):
-    """
-    val_fraction = 0.0 -> train and val use the SAME images (overfit sanity check).
-    val_fraction > 0   -> disjoint random split, fixed by `seed`.
-    `augment` applies to the train set only.
-    """
+    """COCO128 (sanity check). val_fraction=0.0 -> train and val use the SAME images."""
     dataset_dir = download_coco128(root)
     image_dir = dataset_dir / "images" / "train2017"
     all_paths = sorted(p for p in image_dir.iterdir() if p.suffix.lower() in {".jpg", ".jpeg", ".png"})
@@ -131,3 +130,25 @@ def build_dataloaders(root="data", batch_size=8, img_size=IMG_SIZE, val_fraction
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False,
                             num_workers=num_workers, collate_fn=collate_fn)
     return train_loader, val_loader
+
+
+def build_coco_subset_loaders(root="data/coco_subset", batch_size=8, img_size=IMG_SIZE,
+                              augment=True, num_workers=4):
+    """
+    prepare_coco_subset.py se bane folder ke liye:
+        <root>/images/{train,test}/*.jpg  +  <root>/labels/{train,test}/*.txt
+    `augment` sirf train pe lagta hai. Returns (train_loader, test_loader).
+    """
+    root = Path(root)
+
+    def paths(split):
+        d = root / "images" / split
+        return sorted(p for p in d.iterdir() if p.suffix.lower() in {".jpg", ".jpeg", ".png"})
+
+    train_ds = CocoDataset(paths("train"), img_size, augment=augment)
+    test_ds = CocoDataset(paths("test"), img_size, augment=False)
+
+    kw = dict(batch_size=batch_size, num_workers=num_workers, collate_fn=collate_fn)
+    train_loader = DataLoader(train_ds, shuffle=True, **kw)
+    test_loader = DataLoader(test_ds, shuffle=False, **kw)
+    return train_loader, test_loader
