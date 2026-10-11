@@ -11,7 +11,7 @@ except ImportError:
 from src.dataset import build_folder_loaders, NUM_CLASSES, CLASS_NAMES, DATA_ROOT
 from src.model.build import build_model
 
-# ---------------- config (IMG_SIZE aur USE_P2 train.py jaise EXACT same) ----------------
+# ---------------- config  ----------------
 IMG_SIZE = 640
 USE_P2 = False
 BATCH_SIZE = 4

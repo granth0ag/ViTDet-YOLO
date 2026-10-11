@@ -4,7 +4,7 @@ from ultralytics.utils.loss import v8DetectionLoss
 
 
 def make_batch(targets, device):
-    """Tere list-of-tensors targets -> ultralytics ka batch dict."""
+   
     idx = torch.cat([torch.full((len(t),), i, dtype=torch.float32)
                      for i, t in enumerate(targets)])
     t = torch.cat(targets)
