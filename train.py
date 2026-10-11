@@ -16,7 +16,7 @@ from src.utils.tb_utils import evaluate_map, detection_images
 # ---------------- config ----------------
 IMG_SIZE = 320
 BATCH_SIZE = 8
-EPOCHS = 2           # pehle test ke liye 2 kar ke chala
+EPOCHS = 100         # pehle test ke liye 2 kar ke chala
 LR_BACKBONE = 1e-4
 LR_HEAD = 1e-3
 WEIGHT_DECAY = 0.05

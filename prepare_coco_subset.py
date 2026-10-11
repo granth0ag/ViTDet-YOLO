@@ -15,7 +15,7 @@ import zipfile
 from pathlib import Path
 
 # ---------------- config ----------------
-N_IMAGES = 3000
+N_IMAGES = 4000
 SPLITS = {"train": 0.9, "test": 0.1}
 SEED = 42
 
