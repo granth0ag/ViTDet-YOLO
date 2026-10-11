@@ -25,10 +25,10 @@ def run_attention(attn, x):
 
 
 class ViTDetBackbone(nn.Module):
-    def __init__(self, img_size=640, window_size=10, global_idx=(2, 5, 8, 11)):
+    def __init__(self, img_size=640, window_size=10, global_idx=(2, 5, 8, 11), drop_path_rate=0.0):
         super().__init__()
         self.vit = timm.create_model("vit_small_patch16_224", pretrained=True, num_classes=0,
-                                 img_size=img_size, drop_path_rate=0.1)
+                                 img_size=img_size, drop_path_rate=drop_path_rate)
         self.patch_size = 16
         self.embed_dim = self.vit.embed_dim
         self.window_size = window_size
