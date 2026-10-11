@@ -4,8 +4,9 @@ A small object detector that combines a **plain Vision Transformer backbone with
 (ViTDet-style), a **simple feature pyramid**, and the **YOLOv8 anchor-free detection head**.
 Trained and evaluated on the African Wildlife dataset (4 classes).
 
-<!-- PASTE: detection output grid image here -->
-![Detections](assets/detections.jpg)
+
+
+
 
 ## Architecture
 
@@ -86,16 +87,15 @@ Test split, best checkpoint (selected on the validation split):
 
 ### Training curves
 
-<!-- PASTE: loss curves (loss/total, box, cls, dfl) -->
-![Loss curves](assets/loss_curves.png)
+<img width="751" height="433" alt="Screenshot 2026-10-11 at 10 58 09 PM" src="https://github.com/user-attachments/assets/57458ee8-e8a3-45b3-83e6-d0f3f6d70459" />
+<img width="751" height="433" alt="Screenshot 2026-10-11 at 10 59 23 PM" src="https://github.com/user-attachments/assets/2b31ada5-6763-40ca-bd9f-3d61fb80a632" />
 
-<!-- PASTE: validation mAP curves -->
-![Validation metrics](assets/metric_curves.png)
+<img width="884" height="433" alt="Screenshot 2026-10-11 at 11 00 22 PM" src="https://github.com/user-attachments/assets/c409265a-a45a-4899-87f0-ec5963531863" />
 
 ### Sample detections
 
-<!-- PASTE: 4-6 test-image detections (green = ground truth, red = prediction if from TensorBoard) -->
-![Sample detections](assets/sample_detections.png)
+<img width="399" height="167" alt="Screenshot 2026-10-11 at 10 57 07 PM" src="https://github.com/user-attachments/assets/2c947232-0c58-4c08-b61f-60e2e7ee9ea0" />
+
 
 ## Notes and limitations
 
