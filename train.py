@@ -13,7 +13,7 @@ from src.utils.tb_utils import evaluate_map, detection_images
 # ---------------- config ----------------
 IMG_SIZE = 640
 BATCH_SIZE = 4            # OOM na aaye to 8 try kar
-EPOCHS = 100            # pehle 1-2 se time naap, phir set kar
+EPOCHS = 60           # pehle 1-2 se time naap, phir set kar
 LR_BACKBONE = 1e-4
 LR_HEAD = 1e-3
 WEIGHT_DECAY = 0.05
