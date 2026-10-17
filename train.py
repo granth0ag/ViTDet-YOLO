@@ -12,18 +12,29 @@ from src.utils.tb_utils import evaluate_map, detection_images
 
 # ---------------- config ----------------
 IMG_SIZE = 640
-BATCH_SIZE = 4            # OOM na aaye to 8 try kar
-EPOCHS = 60           # pehle 1-2 se time naap, phir set kar
+BATCH_SIZE = 4           
+EPOCHS = 3               
 LR_BACKBONE = 1e-4
 LR_HEAD = 1e-3
 WEIGHT_DECAY = 0.05
 DROP_PATH = 0.1
-USE_P2 = False            # True = stride-4 level (evaluate.py / inference.py mein SAME rakhna)
+USE_P2 = False            # True = stride-4 level (evaluate.py / inference.py mein SAME hoga)
 SEED = 42
-EVAL_EVERY = 5            # val mAP + detection images kitne epochs baad
+EVAL_EVERY = 1            # val mAP + detection images kitne epochs baad
 NUM_WORKERS = 4
 
-TAG = f"wildlife_{IMG_SIZE}_{'p2' if USE_P2 else 'p3p5'}"
+# ---------------- augmentation ablation ----------------
+RUN = "D"                 # "A" / "B" / "C" / "D"
+AUG_PRESETS = {
+    "A": dict(mosaic=0.0, mixup=0.0, erase=0.0,  photo_ops=0),   # baseline: zoom/shift + colour jitter + flip
+    "B": dict(mosaic=1.0, mixup=0.0, erase=0.0,  photo_ops=0),   # + mosaic
+    "C": dict(mosaic=1.0, mixup=0.0, erase=0.25, photo_ops=2),   # + RandAugment-lite + random erasing
+    "D": dict(mosaic=1.0, mixup=0.1, erase=0.25, photo_ops=2),   # + mixup
+}
+AUG = AUG_PRESETS[RUN]
+CLOSE_MOSAIC = 1         # aakhri itne epochs mein mosaic + mixup band (clean images pe fine-tune)
+
+TAG = f"wildlife_{IMG_SIZE}_{'p2' if USE_P2 else 'p3p5'}_aug{RUN}"
 LOG_DIR = f"runs/{TAG}"
 BEST_CKPT, LAST_CKPT = f"best_{TAG}.pt", f"last_{TAG}.pt"
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -33,7 +44,8 @@ random.seed(SEED); np.random.seed(SEED); torch.manual_seed(SEED)
 # ---------------- data ----------------
 train_loader, val_loader, _ = build_folder_loaders(
     DATA_ROOT, splits=("train", "val", "test"), batch_size=BATCH_SIZE,
-    img_size=IMG_SIZE, augment=True, num_workers=NUM_WORKERS)
+    img_size=IMG_SIZE, augment=True, num_workers=NUM_WORKERS, aug=AUG)
+print(f"run {RUN}: {AUG}")
 print(f"train: {len(train_loader.dataset)} | val: {len(val_loader.dataset)} images")
 
 # ---------------- model ----------------
@@ -71,6 +83,12 @@ def train_one_epoch():
 
 best_map = -1.0
 for epoch in range(1, EPOCHS + 1):
+    # ---- close mosaic: aakhri epochs clean images pe ----
+    if epoch == EPOCHS - CLOSE_MOSAIC + 1 and (AUG["mosaic"] > 0 or AUG["mixup"] > 0):
+        train_loader.dataset.mosaic_p = 0.0      # persistent_workers=False hai, to workers ko naya value mil jaata hai
+        train_loader.dataset.mixup_p = 0.0
+        print(f"epoch {epoch}: mosaic + mixup off")
+
     tr_loss, it = train_one_epoch()
 
     # ---- loss + lr curves ----

@@ -1,4 +1,5 @@
 # evaluate.py
+import sys
 from pathlib import Path
 
 import torch
@@ -11,11 +12,12 @@ except ImportError:
 from src.dataset import build_folder_loaders, NUM_CLASSES, CLASS_NAMES, DATA_ROOT
 from src.model.build import build_model
 
-# ---------------- config  ----------------
+# ---------------- config (IMG_SIZE, USE_P2 train.py jaise EXACT same) ----------------
 IMG_SIZE = 640
 USE_P2 = False
 BATCH_SIZE = 4
-TAG = f"wildlife_{IMG_SIZE}_{'p2' if USE_P2 else 'p3p5'}"
+RUN = sys.argv[1] if len(sys.argv) > 1 else "B"       # python evaluate.py A|B|C|D
+TAG = f"wildlife_{IMG_SIZE}_{'p2' if USE_P2 else 'p3p5'}_aug{RUN}"
 CKPT = f"best_{TAG}.pt"   # best val mAP wala checkpoint (val se chuna gaya, to test leak nahi)
 CONF_THRES = 0.001        # mAP ke liye low rakhte hain, warna recall kat jaata hai
 IOU_THRES = 0.65
@@ -25,7 +27,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 (test_loader,) = build_folder_loaders(
     DATA_ROOT, splits=("test",), batch_size=BATCH_SIZE, img_size=IMG_SIZE,
     augment=False, num_workers=2)
-print(f"test images: {len(test_loader.dataset)} | checkpoint: {CKPT}")
+print(f"run {RUN} | test images: {len(test_loader.dataset)} | checkpoint: {CKPT}")
 
 # ---------------- model ----------------
 model = build_model(IMG_SIZE, NUM_CLASSES, use_p2=USE_P2).to(device)
@@ -76,3 +78,7 @@ if __name__ == "__main__":
         print("per-class mAP@[.5:.95]:")
         for c, ap in zip(r["classes"].tolist(), r["map_per_class"].tolist()):
             print(f"  {CLASS_NAMES[c]:10s} {ap:.4f}")
+
+    # ablation table mein paste karne ke liye ek line
+    print(f"\nTABLE | run {RUN} | mAP@0.5 {r['map_50'].item():.4f} | mAP {r['map'].item():.4f} "
+          f"| mAP@0.75 {r['map_75'].item():.4f} | mAR@100 {r['mar_100'].item():.4f}")
