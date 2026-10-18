@@ -13,14 +13,14 @@ from src.utils.tb_utils import evaluate_map, detection_images
 # ---------------- config ----------------
 IMG_SIZE = 640
 BATCH_SIZE = 4           
-EPOCHS = 3               
+EPOCHS = 60               
 LR_BACKBONE = 1e-4
 LR_HEAD = 1e-3
 WEIGHT_DECAY = 0.05
 DROP_PATH = 0.1
 USE_P2 = False            # True = stride-4 level (evaluate.py / inference.py mein SAME hoga)
 SEED = 42
-EVAL_EVERY = 1            # val mAP + detection images kitne epochs baad
+EVAL_EVERY = 5            # val mAP + detection images kitne epochs baad
 NUM_WORKERS = 4
 
 # ---------------- augmentation ablation ----------------
@@ -32,7 +32,7 @@ AUG_PRESETS = {
     "D": dict(mosaic=1.0, mixup=0.1, erase=0.25, photo_ops=2),   # + mixup
 }
 AUG = AUG_PRESETS[RUN]
-CLOSE_MOSAIC = 1         # aakhri itne epochs mein mosaic + mixup band (clean images pe fine-tune)
+CLOSE_MOSAIC = 10       # aakhri itne epochs mein mosaic + mixup band (clean images pe fine-tune)
 
 TAG = f"wildlife_{IMG_SIZE}_{'p2' if USE_P2 else 'p3p5'}_aug{RUN}"
 LOG_DIR = f"runs/{TAG}"
