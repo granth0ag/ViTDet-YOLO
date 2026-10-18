@@ -1,5 +1,5 @@
 # inference.py
-import sys
+import argparse
 from pathlib import Path
 
 import torch
@@ -13,22 +13,22 @@ except ImportError:
 from src.dataset import NUM_CLASSES, CLASS_NAMES, DATA_ROOT, MEAN, STD, IMG_EXT
 from src.model.build import build_model
 
-# ---------------- config (IMG_SIZE aur USE_P2 train.py jaise EXACT same) ----------------
+# ---------------- config (IMG_SIZE, USE_P2 train.py jaise EXACT same) ----------------
 IMG_SIZE = 640
 USE_P2 = False
-TAG = f"wildlife_{IMG_SIZE}_{'p2' if USE_P2 else 'p3p5'}"
-CKPT = f"best_{TAG}.pt"
 CONF_THRES = 0.25
 IOU_THRES = 0.45
-OUT_DIR = Path("outputs")
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 to_tensor = T.Compose([T.ToTensor(), T.Normalize(mean=MEAN, std=STD)])
 
 
-def load_model():
+def load_model(run):
+    tag = f"wildlife_{IMG_SIZE}_{'p2' if USE_P2 else 'p3p5'}_aug{run}"
+    ckpt = f"best_{tag}.pt"
     model = build_model(IMG_SIZE, NUM_CLASSES, use_p2=USE_P2).to(device)
-    model.load_state_dict(torch.load(CKPT, map_location=device))
+    model.load_state_dict(torch.load(ckpt, map_location=device))
+    print(f"loaded {ckpt}")
     return model.eval()
 
 
@@ -71,20 +71,28 @@ def draw(image, det):
 
 
 if __name__ == "__main__":
-    # usage: python inference.py img1.jpg img2.jpg     (ya koi folder)
+    # python inference.py --run D                      -> test split ki pehli 8 images
+    # python inference.py --run D img1.jpg folder/     -> apni images / folder
+    ap = argparse.ArgumentParser()
+    ap.add_argument("paths", nargs="*", help="image files ya folders")
+    ap.add_argument("--run", default="B", help="A / B / C / D (train.py ka RUN)")
+    args = ap.parse_args()
+
     paths = []
-    for a in sys.argv[1:]:
+    for a in args.paths:
         p = Path(a)
         paths += sorted(q for q in p.iterdir() if q.suffix.lower() in IMG_EXT) if p.is_dir() else [p]
     if not paths:                                              # default: test split ki pehli 8 images
         test_dir = Path(DATA_ROOT) / "images" / "test"
         paths = sorted(q for q in test_dir.iterdir() if q.suffix.lower() in IMG_EXT)[:8]
 
-    OUT_DIR.mkdir(exist_ok=True)
-    model = load_model()
+    out_dir = Path("outputs") / args.run
+    out_dir.mkdir(parents=True, exist_ok=True)
+    model = load_model(args.run)
     for p in paths:
         image = Image.open(p).convert("RGB")
         det = detect(model, image)
-        draw(image, det).save(OUT_DIR / p.name)
+        draw(image, det).save(out_dir / p.name)
         names = sorted({CLASS_NAMES[int(c)] for c in det[:, 5].tolist()})
         print(f"{p.name}: {len(det)} detections {names}")
+    print("saved in", out_dir)
