@@ -11,22 +11,20 @@ except ImportError:
     from ultralytics.utils.ops import non_max_suppression
 
 from src.dataset import NUM_CLASSES, CLASS_NAMES, DATA_ROOT, MEAN, STD, IMG_EXT
-from src.model.build import build_model
+from src.model.build import build_model, run_tag
 
 # ---------------- config (IMG_SIZE, USE_P2 train.py jaise EXACT same) ----------------
 IMG_SIZE = 640
 USE_P2 = False
-CONF_THRES = 0.25
 IOU_THRES = 0.45
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 to_tensor = T.Compose([T.ToTensor(), T.Normalize(mean=MEAN, std=STD)])
 
 
-def load_model(run):
-    tag = f"wildlife_{IMG_SIZE}_{'p2' if USE_P2 else 'p3p5'}_aug{run}"
-    ckpt = f"best_{tag}.pt"
-    model = build_model(IMG_SIZE, NUM_CLASSES, use_p2=USE_P2).to(device)
+def load_model(tag, backbone, ckpt_kind="best"):
+    ckpt = f"{ckpt_kind}_{tag}.pt"
+    model = build_model(IMG_SIZE, NUM_CLASSES, use_p2=USE_P2, backbone=backbone).to(device)
     model.load_state_dict(torch.load(ckpt, map_location=device))
     print(f"loaded {ckpt}")
     return model.eval()
@@ -44,14 +42,14 @@ def letterbox(image, S=IMG_SIZE):
 
 
 @torch.no_grad()
-def detect(model, image):
+def detect(model, image, conf=0.25):
     """PIL image -> [n, 6] (x1, y1, x2, y2, conf, cls) in ORIGINAL image pixels."""
     w0, h0 = image.size
     canvas, scale, pad_x, pad_y = letterbox(image)
     x = to_tensor(canvas).unsqueeze(0).to(device)
 
     y, _ = model(x)
-    det = non_max_suppression(y, conf_thres=CONF_THRES, iou_thres=IOU_THRES)[0].cpu()
+    det = non_max_suppression(y, conf_thres=conf, iou_thres=IOU_THRES)[0].cpu()
 
     # letterbox pixels -> original pixels
     det[:, [0, 2]] = ((det[:, [0, 2]] - pad_x) / scale).clamp(0, w0)
@@ -71,11 +69,14 @@ def draw(image, det):
 
 
 if __name__ == "__main__":
-    # python inference.py --run D                      -> test split ki pehli 8 images
-    # python inference.py --run D img1.jpg folder/     -> apni images / folder
+    # python inference.py --aug D --backbone conv                    -> test split ki pehli 8 images
+    # python inference.py --aug D --backbone conv img1.jpg folder/   -> apni images / folder
     ap = argparse.ArgumentParser()
     ap.add_argument("paths", nargs="*", help="image files ya folders")
-    ap.add_argument("--run", default="B", help="A / B / C / D (train.py ka RUN)")
+    ap.add_argument("--aug", default="D", choices=["A", "B", "C", "D"], help="train.py wala --aug")
+    ap.add_argument("--backbone", default="vit", choices=["vit", "conv"], help="train.py wala --backbone")
+    ap.add_argument("--ckpt", default="best", choices=["best", "last"])
+    ap.add_argument("--conf", type=float, default=0.25, help="detections ka confidence threshold")
     args = ap.parse_args()
 
     paths = []
@@ -86,12 +87,14 @@ if __name__ == "__main__":
         test_dir = Path(DATA_ROOT) / "images" / "test"
         paths = sorted(q for q in test_dir.iterdir() if q.suffix.lower() in IMG_EXT)[:8]
 
-    out_dir = Path("outputs") / args.run
+    tag = run_tag(IMG_SIZE, USE_P2, args.backbone, args.aug)
+    out_dir = Path("outputs") / tag
     out_dir.mkdir(parents=True, exist_ok=True)
-    model = load_model(args.run)
+
+    model = load_model(tag, args.backbone, args.ckpt)
     for p in paths:
         image = Image.open(p).convert("RGB")
-        det = detect(model, image)
+        det = detect(model, image, conf=args.conf)
         draw(image, det).save(out_dir / p.name)
         names = sorted({CLASS_NAMES[int(c)] for c in det[:, 5].tolist()})
         print(f"{p.name}: {len(det)} detections {names}")

@@ -1,4 +1,5 @@
 # train.py
+import argparse
 import random
 
 import numpy as np
@@ -6,35 +7,45 @@ import torch
 from torch.utils.tensorboard import SummaryWriter
 
 from src.dataset import build_folder_loaders, NUM_CLASSES, DATA_ROOT
-from src.model.build import build_model
+from src.model.build import build_model, run_tag
 from src.losses.detection_loss import DetectionLoss
 from src.utils.tb_utils import evaluate_map, detection_images
 
-# ---------------- config ----------------
-IMG_SIZE = 640
-BATCH_SIZE = 4           
-EPOCHS = 60               
-LR_BACKBONE = 1e-4
-LR_HEAD = 1e-3
-WEIGHT_DECAY = 0.05
-DROP_PATH = 0.1
-USE_P2 = False            # True = stride-4 level (evaluate.py / inference.py mein SAME hoga)
-SEED = 42
-EVAL_EVERY = 5            # val mAP + detection images kitne epochs baad
-NUM_WORKERS = 4
-
-# ---------------- augmentation ablation ----------------
-RUN = "D"                 # "A" / "B" / "C" / "D"
+# ---------------- augmentation presets ----------------
 AUG_PRESETS = {
     "A": dict(mosaic=0.0, mixup=0.0, erase=0.0,  photo_ops=0),   # baseline: zoom/shift + colour jitter + flip
     "B": dict(mosaic=1.0, mixup=0.0, erase=0.0,  photo_ops=0),   # + mosaic
     "C": dict(mosaic=1.0, mixup=0.0, erase=0.25, photo_ops=2),   # + RandAugment-lite + random erasing
     "D": dict(mosaic=1.0, mixup=0.1, erase=0.25, photo_ops=2),   # + mixup
 }
-AUG = AUG_PRESETS[RUN]
-CLOSE_MOSAIC = 10       # aakhri itne epochs mein mosaic + mixup band (clean images pe fine-tune)
 
-TAG = f"wildlife_{IMG_SIZE}_{'p2' if USE_P2 else 'p3p5'}_aug{RUN}"
+# ---------------- args ----------------
+ap = argparse.ArgumentParser()
+ap.add_argument("--aug", default="D", choices=list(AUG_PRESETS), help="augmentation preset")
+ap.add_argument("--backbone", default="vit", choices=["vit", "conv"],
+                help="vit = original, conv = LocalViT-style conv MLP")
+ap.add_argument("--epochs", type=int, default=60)
+ap.add_argument("--close-mosaic", type=int, default=10, help="aakhri itne epochs mein mosaic + mixup band")
+ap.add_argument("--eval-every", type=int, default=5)
+args = ap.parse_args()
+
+# ---------------- config ----------------
+IMG_SIZE = 640
+BATCH_SIZE = 4
+EPOCHS = args.epochs
+CLOSE_MOSAIC = args.close_mosaic
+EVAL_EVERY = args.eval_every
+LR_BACKBONE = 1e-4
+LR_HEAD = 1e-3
+WEIGHT_DECAY = 0.05
+DROP_PATH = 0.1
+USE_P2 = False            # True = stride-4 level (evaluate.py / inference.py mein SAME hona chahiye)
+SEED = 42
+NUM_WORKERS = 4
+
+RUN = args.aug
+AUG = AUG_PRESETS[RUN]
+TAG = run_tag(IMG_SIZE, USE_P2, args.backbone, RUN)
 LOG_DIR = f"runs/{TAG}"
 BEST_CKPT, LAST_CKPT = f"best_{TAG}.pt", f"last_{TAG}.pt"
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -45,11 +56,13 @@ random.seed(SEED); np.random.seed(SEED); torch.manual_seed(SEED)
 train_loader, val_loader, _ = build_folder_loaders(
     DATA_ROOT, splits=("train", "val", "test"), batch_size=BATCH_SIZE,
     img_size=IMG_SIZE, augment=True, num_workers=NUM_WORKERS, aug=AUG)
-print(f"run {RUN}: {AUG}")
+print(f"run: {TAG} | backbone={args.backbone} | aug {RUN}: {AUG}")
+print(f"epochs={EPOCHS} close_mosaic={CLOSE_MOSAIC} eval_every={EVAL_EVERY}")
 print(f"train: {len(train_loader.dataset)} | val: {len(val_loader.dataset)} images")
 
 # ---------------- model ----------------
-model = build_model(IMG_SIZE, NUM_CLASSES, use_p2=USE_P2, drop_path_rate=DROP_PATH).to(device)
+model = build_model(IMG_SIZE, NUM_CLASSES, use_p2=USE_P2, drop_path_rate=DROP_PATH,
+                    backbone=args.backbone).to(device)
 criterion = DetectionLoss(model)                 # model .to(device) ke BAAD
 
 optimizer = torch.optim.AdamW([
