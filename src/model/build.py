@@ -33,3 +33,4 @@ def build_model(img_size=640, num_classes=4, use_p2=False, out_ch=128,
 
     neck = SimpleFeaturePyramid(in_ch=bb.embed_dim, out_ch=out_ch, use_p2=use_p2)
     head = YoloHead(num_classes=num_classes, ch=(out_ch,) * len(neck.strides), strides=neck.strides)
+    return DetectionModel(bb, neck, head)
