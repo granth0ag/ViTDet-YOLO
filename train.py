@@ -48,6 +48,7 @@ AUG = AUG_PRESETS[RUN]
 LOG_DIR = f"runs/{TAG}"
 BEST_CKPT, LAST_CKPT = f"best_{TAG}.pt", f"last_{TAG}.pt"
 device = "cuda" if torch.cuda.is_available() else "cpu"
+scaler = torch.amp.GradScaler("cuda") if device == "cuda" else None
 
 random.seed(SEED); np.random.seed(SEED); torch.manual_seed(SEED)
 
@@ -77,18 +78,30 @@ writer = SummaryWriter(LOG_DIR, flush_secs=30)
 def train_one_epoch():
     model.train()
     total, items = 0.0, torch.zeros(3)
+
     for images, targets, _ in train_loader:
         images = images.to(device)
-        preds = model(images)
-        loss, loss_items = criterion(preds, targets, device)
 
         optimizer.zero_grad()
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
-        optimizer.step()
+
+        with torch.amp.autocast("cuda", enabled=(device == "cuda")):
+            preds = model(images)
+            loss, loss_items = criterion(preds, targets, device)
+
+        if scaler is not None:
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
+            optimizer.step()
 
         total += loss.item()
         items += loss_items[:3].cpu()
+
     n = len(train_loader)
     return total / n, items / n
 
