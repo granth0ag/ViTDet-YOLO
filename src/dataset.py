@@ -19,11 +19,26 @@ PHOTO_OPS = [_enh(ImageEnhance.Brightness), _enh(ImageEnhance.Contrast),
              _enh(ImageEnhance.Color), _enh(ImageEnhance.Sharpness),
              lambda im, m: ImageOps.autocontrast(im), lambda im, m: ImageOps.equalize(im)]
 
-# ---------------- African Wildlife config ----------------
-CLASS_NAMES = ["buffalo", "elephant", "rhino", "zebra"]       # class ids 0..3
-NUM_CLASSES = len(CLASS_NAMES)
-# prepare_wildlife.py ka output folder (images/{train,val,test}, labels/{train,val,test})
-DATA_ROOT = "/kaggle/temp/wildlife" if Path("/kaggle").exists() else "data/wildlife"
+# ---------------- DataSet config ----------------
+BASE = Path("/kaggle/temp") if Path("/kaggle").exists() else Path("data")
+
+DATASETS = {
+    "wildlife": dict(root=BASE / "wildlife", img_size=640,
+                     classes=["buffalo", "elephant", "rhino", "zebra"]),
+    "voc": dict(root=BASE / "voc", img_size=480,
+                classes=["aeroplane", "bicycle", "bird", "boat", "bottle", "bus", "car", "cat",
+                         "chair", "cow", "diningtable", "dog", "horse", "motorbike", "person",
+                         "pottedplant", "sheep", "sofa", "train", "tvmonitor"]),
+}
+
+# ---------------- augmentation presets ----------------
+AUG_PRESETS = {
+    "A": dict(mosaic=0.0, mixup=0.0, erase=0.0,  photo_ops=0),   # baseline: zoom/shift + colour jitter + flip
+    "B": dict(mosaic=1.0, mixup=0.0, erase=0.0,  photo_ops=0),   # + mosaic
+    "C": dict(mosaic=1.0, mixup=0.0, erase=0.25, photo_ops=2),   # + RandAugment-lite + random erasing
+    "D": dict(mosaic=1.0, mixup=0.1, erase=0.25, photo_ops=2),   # + mixup
+}
+
 
 IMG_SIZE = 640
 MEAN = (0.485, 0.456, 0.406)
@@ -180,7 +195,7 @@ def collate_fn(batch):
     return torch.stack(images, 0), list(targets), list(paths)
 
 
-def build_folder_loaders(root=DATA_ROOT, splits=("train", "val", "test"), batch_size=8,
+def build_folder_loaders(root , splits=("train", "val", "test"), batch_size=8,
                          img_size=IMG_SIZE, augment=True, num_workers=4, aug=None):
     root, loaders, aug = Path(root), [], (aug or {})
     for s in splits:
