@@ -7,6 +7,12 @@ from src.model.detector import YoloHead, DetectionModel
 BACKBONES = ("vit", "conv")
 
 
+def run_tag(dataset, img_size, use_p2, backbone, aug):
+    """Checkpoint / TensorBoard / outputs ka naam. train.py, evaluate.py, inference.py teeno yahi use karein."""
+    return (f"{dataset}_{img_size}_{'p2' if use_p2 else 'p3p5'}"
+            f"{'_conv' if backbone == 'conv' else ''}_aug{aug}")
+
+
 def build_model(img_size=640, num_classes=4, use_p2=False, out_ch=128,
                 window_size=10, drop_path_rate=0.0,
                 backbone="vit", act_after_dw=False, conv_blocks=None):
@@ -27,10 +33,3 @@ def build_model(img_size=640, num_classes=4, use_p2=False, out_ch=128,
 
     neck = SimpleFeaturePyramid(in_ch=bb.embed_dim, out_ch=out_ch, use_p2=use_p2)
     head = YoloHead(num_classes=num_classes, ch=(out_ch,) * len(neck.strides), strides=neck.strides)
-    return DetectionModel(bb, neck, head)
-
-
-def run_tag(img_size, use_p2, backbone, aug):
-    """Checkpoint / TensorBoard ka naam. train.py, evaluate.py, inference.py teeno yahi use karein."""
-    return (f"wildlife_{img_size}_{'p2' if use_p2 else 'p3p5'}"
-            f"{'_conv' if backbone == 'conv' else ''}_aug{aug}")

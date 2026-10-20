@@ -6,18 +6,12 @@ import numpy as np
 import torch
 from torch.utils.tensorboard import SummaryWriter
 
-from src.dataset import build_folder_loaders, NUM_CLASSES, DATA_ROOT
+from src.dataset import build_folder_loaders, DATASETS,AUG_PRESETS
 from src.model.build import build_model, run_tag
 from src.losses.detection_loss import DetectionLoss
 from src.utils.tb_utils import evaluate_map, detection_images
 
-# ---------------- augmentation presets ----------------
-AUG_PRESETS = {
-    "A": dict(mosaic=0.0, mixup=0.0, erase=0.0,  photo_ops=0),   # baseline: zoom/shift + colour jitter + flip
-    "B": dict(mosaic=1.0, mixup=0.0, erase=0.0,  photo_ops=0),   # + mosaic
-    "C": dict(mosaic=1.0, mixup=0.0, erase=0.25, photo_ops=2),   # + RandAugment-lite + random erasing
-    "D": dict(mosaic=1.0, mixup=0.1, erase=0.25, photo_ops=2),   # + mixup
-}
+
 
 # ---------------- args ----------------
 ap = argparse.ArgumentParser()
@@ -27,10 +21,12 @@ ap.add_argument("--backbone", default="vit", choices=["vit", "conv"],
 ap.add_argument("--epochs", type=int, default=60)
 ap.add_argument("--close-mosaic", type=int, default=10, help="aakhri itne epochs mein mosaic + mixup band")
 ap.add_argument("--eval-every", type=int, default=5)
+ap.add_argument("--dataset", default="wildlife", choices=list(DATASETS))
+ap.add_argument("--img-size", type=int, default=None, help="override the dataset's default")
 args = ap.parse_args()
 
 # ---------------- config ----------------
-IMG_SIZE = 640
+
 BATCH_SIZE = 4
 EPOCHS = args.epochs
 CLOSE_MOSAIC = args.close_mosaic
@@ -42,10 +38,13 @@ DROP_PATH = 0.1
 USE_P2 = False            # True = stride-4 level (evaluate.py / inference.py mein SAME hona chahiye)
 SEED = 42
 NUM_WORKERS = 4
-
+DS = DATASETS[args.dataset]
+IMG_SIZE = args.img_size or DS["img_size"]
+CLASS_NAMES, DATA_ROOT = DS["classes"], DS["root"]
+NUM_CLASSES = len(CLASS_NAMES)
+TAG = run_tag(args.dataset, IMG_SIZE, USE_P2, args.backbone, args.aug)
 RUN = args.aug
 AUG = AUG_PRESETS[RUN]
-TAG = run_tag(IMG_SIZE, USE_P2, args.backbone, RUN)
 LOG_DIR = f"runs/{TAG}"
 BEST_CKPT, LAST_CKPT = f"best_{TAG}.pt", f"last_{TAG}.pt"
 device = "cuda" if torch.cuda.is_available() else "cpu"

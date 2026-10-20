@@ -1,3 +1,4 @@
+
 # evaluate.py
 import argparse
 
@@ -8,11 +9,13 @@ try:
 except ImportError:
     from ultralytics.utils.ops import non_max_suppression
 
-from src.dataset import build_folder_loaders, NUM_CLASSES, CLASS_NAMES, DATA_ROOT
+from src.dataset import build_folder_loaders, DATASETS
 from src.model.build import build_model, run_tag
 
 # ---------------- args ----------------
 parser = argparse.ArgumentParser()
+parser.add_argument("--dataset", default="wildlife", choices=list(DATASETS))
+parser.add_argument("--img-size", type=int, default=None, help="override the dataset's default")
 parser.add_argument("--aug", default="D", choices=["A", "B", "C", "D"], help="train.py wala --aug")
 parser.add_argument("--backbone", default="vit", choices=["vit", "conv"], help="train.py wala --backbone")
 parser.add_argument("--split", default="test", choices=["val", "test"])
@@ -21,12 +24,18 @@ parser.add_argument("--conf", type=float, default=0.001, help="NMS confidence th
 args = parser.parse_args()
 
 # ---------------- config (IMG_SIZE, USE_P2 train.py jaise EXACT same) ----------------
-IMG_SIZE = 640
+DS = DATASETS[args.dataset]
+IMG_SIZE = args.img_size or DS["img_size"]
+CLASS_NAMES, DATA_ROOT = DS["classes"], DS["root"]
+NUM_CLASSES = len(CLASS_NAMES)
+
 USE_P2 = False
 BATCH_SIZE = 4
 IOU_THRES = 0.65
-TAG = run_tag(IMG_SIZE, USE_P2, args.backbone, args.aug)
+
+TAG = run_tag(args.dataset, IMG_SIZE, USE_P2, args.backbone, args.aug)
 CKPT = f"{args.ckpt}_{TAG}.pt"
+
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # ---------------- data ----------------
@@ -54,7 +63,10 @@ def evaluate():
     metric.warn_on_many_detections = False
 
     for images, targets, _ in loader:
-        y, _ = model(images.to(device))                     # [B, 4+nc, anchors], boxes xywh pixels
+        # AMP for inference/evaluation
+        with torch.amp.autocast("cuda", enabled=(device == "cuda")):
+            y, _ = model(images.to(device))                 # [B, 4+nc, anchors], boxes xywh pixels
+
         dets = non_max_suppression(y, conf_thres=args.conf, iou_thres=IOU_THRES)
 
         preds, gts = [], []

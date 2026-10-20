@@ -1,3 +1,4 @@
+
 # inference.py
 import argparse
 from pathlib import Path
@@ -10,7 +11,7 @@ try:
 except ImportError:
     from ultralytics.utils.ops import non_max_suppression
 
-from src.dataset import NUM_CLASSES, CLASS_NAMES, DATA_ROOT, MEAN, STD, IMG_EXT
+from src.dataset import DATASETS, MEAN, STD, IMG_EXT
 from src.model.build import build_model, run_tag
 
 # ---------------- config (IMG_SIZE, USE_P2 train.py jaise EXACT same) ----------------
@@ -42,13 +43,16 @@ def letterbox(image, S=IMG_SIZE):
 
 
 @torch.no_grad()
+@torch.no_grad()
 def detect(model, image, conf=0.25):
     """PIL image -> [n, 6] (x1, y1, x2, y2, conf, cls) in ORIGINAL image pixels."""
     w0, h0 = image.size
     canvas, scale, pad_x, pad_y = letterbox(image)
     x = to_tensor(canvas).unsqueeze(0).to(device)
 
-    y, _ = model(x)
+    with torch.amp.autocast("cuda", enabled=(device == "cuda")):
+        y, _ = model(x)
+
     det = non_max_suppression(y, conf_thres=conf, iou_thres=IOU_THRES)[0].cpu()
 
     # letterbox pixels -> original pixels
@@ -69,15 +73,23 @@ def draw(image, det):
 
 
 if __name__ == "__main__":
-    # python inference.py --aug D --backbone conv                    -> test split ki pehli 8 images
-    # python inference.py --aug D --backbone conv img1.jpg folder/   -> apni images / folder
+    # python inference.py --dataset wildlife --aug D --backbone conv
+    # python inference.py --dataset wildlife --aug D --backbone conv img1.jpg folder/
+
     ap = argparse.ArgumentParser()
     ap.add_argument("paths", nargs="*", help="image files ya folders")
+    ap.add_argument("--dataset", default="wildlife", choices=list(DATASETS))
     ap.add_argument("--aug", default="D", choices=["A", "B", "C", "D"], help="train.py wala --aug")
     ap.add_argument("--backbone", default="vit", choices=["vit", "conv"], help="train.py wala --backbone")
     ap.add_argument("--ckpt", default="best", choices=["best", "last"])
     ap.add_argument("--conf", type=float, default=0.25, help="detections ka confidence threshold")
     args = ap.parse_args()
+
+    # dataset config
+    DS = DATASETS[args.dataset]
+    NUM_CLASSES = len(DS["classes"])
+    CLASS_NAMES = DS["classes"]
+    DATA_ROOT = DS["root"]
 
     paths = []
     for a in args.paths:
@@ -87,7 +99,7 @@ if __name__ == "__main__":
         test_dir = Path(DATA_ROOT) / "images" / "test"
         paths = sorted(q for q in test_dir.iterdir() if q.suffix.lower() in IMG_EXT)[:8]
 
-    tag = run_tag(IMG_SIZE, USE_P2, args.backbone, args.aug)
+    tag = run_tag(args.dataset, IMG_SIZE, USE_P2, args.backbone, args.aug)
     out_dir = Path("outputs") / tag
     out_dir.mkdir(parents=True, exist_ok=True)
 
