@@ -134,10 +134,12 @@ Hyperparameters were set once and **not extensively tuned for either architectur
 
 | Metric | ViT Baseline | Conv-enhanced |
 |---|---:|---:|
-| mAP@0.5 | **0.9519** | _add value_ |
-| mAP@[0.5:0.95] | **0.7172** | _add value_ |
-| mAP@0.75 | **0.8493** | _add value_ |
-| mAR@100 | **0.7587** | _add value_ |
+| mAP@0.5 | 0.9519 | **0.9534** |
+| mAP@[0.5:0.95] | **0.7172** | 0.7166 |
+| mAP@0.75 | **0.8493** | 0.8390 |
+| mAR@100 | 0.7587 | **0.7671** |
+
+On African Wildlife the two models are essentially tied. The conv-enhanced model is marginally better at mAP@0.5 and mAR@100, while the baseline is marginally better at mAP@[0.5:0.95] and mAP@0.75, so the VOC pattern does not repeat here. These differences are well within what single-run variation could produce.
 
 ### Pascal VOC
 
@@ -163,15 +165,14 @@ On VOC, the convolutional module gives a small increase in overall mAP and AP@0.
 
 ### Pascal VOC
 
-
 **ViT Baseline**
 
-> <img width="1391" height="281" alt="Screenshot 2026-10-21 at 9 25 49 PM" src="https://github.com/user-attachments/assets/5c54b6a2-8ae6-42f7-a1b6-252f13939f70" />
+<img width="1391" height="281" alt="Pascal VOC training curves, ViT baseline" src="https://github.com/user-attachments/assets/5c54b6a2-8ae6-42f7-a1b6-252f13939f70" />
 
 **Conv-enhanced ViT**
-<img width="1006" height="172" alt="Screenshot 2026-10-22 at 1 20 55 PM" src="https://github.com/user-attachments/assets/7db5f267-4f82-482e-8843-f962ea9b22ef" />
 
-> <img width="1006" height="172" alt="Screenshot 2026-10-22 at 1 20 55 PM" src="https://github.com/user-attachments/assets/7db5f267-4f82-482e-8843-f962ea9b22ef" />
+<img width="1006" height="172" alt="Pascal VOC training curves, conv-enhanced ViT" src="https://github.com/user-attachments/assets/7db5f267-4f82-482e-8843-f962ea9b22ef" />
+
 ---
 
 ## Sample Detections
@@ -182,11 +183,13 @@ On VOC, the convolutional module gives a small increase in overall mAP and AP@0.
 
 ### Pascal VOC
 
+**ViT Baseline**
+
+> **[ADD IMAGE HERE: Pascal VOC sample detections, ViT baseline]**
 
 **Conv-enhanced ViT**
 
-> <img width="387" height="170" alt="Screenshot 2026-10-22 at 1 21 50 PM" src="https://github.com/user-attachments/assets/df4c5de8-4e5f-40b3-b926-029f07ee50b3" />
-
+<img width="387" height="170" alt="Pascal VOC sample detections, conv-enhanced ViT" src="https://github.com/user-attachments/assets/df4c5de8-4e5f-40b3-b926-029f07ee50b3" />
 
 ---
 
@@ -305,7 +308,7 @@ An ongoing experimental project on **ViT-based object detection and local convol
 - [x] Pascal VOC evaluation
 - [x] Convolution-enhanced ViT variant
 - [x] Baseline vs convolutional comparison (VOC)
-- [ ] Baseline vs convolutional comparison (African Wildlife)
+- [x] Baseline vs convolutional comparison (African Wildlife)
 - [ ] Multi-seed evaluation
 - [ ] Additional datasets
 - [ ] Computational-cost analysis
