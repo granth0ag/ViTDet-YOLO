@@ -183,9 +183,7 @@ On VOC, the convolutional module gives a small increase in overall mAP and AP@0.
 
 ### Pascal VOC
 
-**ViT Baseline**
 
-> **[ADD IMAGE HERE: Pascal VOC sample detections, ViT baseline]**
 
 **Conv-enhanced ViT**
 
