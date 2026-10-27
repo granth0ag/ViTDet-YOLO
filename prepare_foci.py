@@ -6,7 +6,7 @@ FOCI (virus patch detection, Pascal VOC-style XML) -> YOLO format, same layout a
     <BASE>/foci/labels/{train,val}/*.txt      (cls cx cy w h, normalized, class id 0 = virus)
 
 Raw dataset (local, .gitignore mein daalo):
-    <raw>/JPEGImages/   +   <raw>/Annotations/
+    <raw>/.../JPEGImages/   +   <raw>/.../Annotations/   (kahin bhi nested, e.g. Foci_Dataset/Virus_anno/Annotations)
     (cell_Pic1/ aur Xml_cell/ JPEGImages/Annotations ke subsets hain -> use nahi karte)
     (test/ ka official test split hona confirm nahi hai -> use nahi karte)
 
@@ -17,6 +17,7 @@ Split:
 Usage (project root):
     python prepare_foci.py --raw /path/to/Foci_Dataset
     python prepare_foci.py --raw /path/to/Foci_Dataset --val-ratio 0.1 --seed 42 --force
+    python prepare_foci.py --img-dir /x/JPEGImages --ann-dir /x/Virus_anno/Annotations   # folders alag-alag ho to
 
 CLASSES below must match DATASETS["foci"]["classes"] in src/dataset.py.
 """
@@ -49,13 +50,26 @@ EXPECTED_BOXES = 4216          # raw annotation analysis se (sirf warning ke liy
 
 
 # ---------------- locate + pair ----------------
-def find_dirs(raw):
-    """JPEGImages/ aur Annotations/ dhoondho (raw ke andar ya ek level nested)."""
+def _find_one(raw, name):
+    """raw ke andar (kitna bhi nested) us naam ka folder dhoondho; ek hi milna chahiye."""
     raw = Path(raw)
-    for root in [raw] + [p for p in raw.rglob("*") if p.is_dir()]:
-        if (root / "JPEGImages").is_dir() and (root / "Annotations").is_dir():
-            return root / "JPEGImages", root / "Annotations"
-    raise SystemExit(f"{raw} ke andar JPEGImages/ + Annotations/ nahi mile.")
+    hits = sorted(p for p in raw.rglob(name) if p.is_dir())
+    if raw.name == name:
+        hits.insert(0, raw)
+    if not hits:
+        raise SystemExit(f"{raw} ke andar '{name}/' folder nahi mila.")
+    if len(hits) > 1:
+        raise SystemExit(f"'{name}/' ek se zyada jagah mila: {[str(h) for h in hits]}. "
+                         f"Sahi wala --img-dir / --ann-dir se batao.")
+    return hits[0]
+
+
+def find_dirs(raw, img_dir=None, ann_dir=None):
+    """JPEGImages/ aur Annotations/ alag-alag dhoondho (dono ek hi parent mein hone zaroori nahi)."""
+    img_dir = Path(img_dir) if img_dir else _find_one(raw, "JPEGImages")
+    ann_dir = Path(ann_dir) if ann_dir else _find_one(raw, "Annotations")
+    print(f"images:      {img_dir}\nannotations: {ann_dir}")
+    return img_dir, ann_dir
 
 
 def _index(folder, exts):
@@ -198,7 +212,10 @@ def save_checks(n):
 # ---------------- main ----------------
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--raw", required=True, help="Foci_Dataset folder (JPEGImages/ + Annotations/ wala)")
+    ap.add_argument("--raw", default=None, help="Foci_Dataset folder; JPEGImages/ aur Annotations/ iske andar "
+                                                "kahin bhi (nested) ho sakte hain")
+    ap.add_argument("--img-dir", default=None, help="JPEGImages folder seedha batao (auto-search skip)")
+    ap.add_argument("--ann-dir", default=None, help="Annotations folder seedha batao (auto-search skip)")
     ap.add_argument("--val-ratio", type=float, default=0.1, help="val fraction (default 0.1 -> 90/10)")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--force", action="store_true", help="existing output delete karke dobara banao")
@@ -218,7 +235,9 @@ def main():
     if OUT.exists():
         shutil.rmtree(OUT)                                 # pichhla run beech mein ruka tha
 
-    img_dir, ann_dir = find_dirs(args.raw)
+    if not args.raw and not (args.img_dir and args.ann_dir):
+        raise SystemExit("--raw do, ya --img-dir aur --ann-dir dono do.")
+    img_dir, ann_dir = find_dirs(args.raw, args.img_dir, args.ann_dir)
     pairs = pair_files(img_dir, ann_dir)                   # sorted -> deterministic
     assert pairs, "koi image/XML pair nahi mili"
     print(f"matched pairs: {len(pairs)}")
