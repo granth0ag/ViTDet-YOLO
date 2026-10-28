@@ -1,4 +1,3 @@
-
 # evaluate.py
 import argparse
 
@@ -18,7 +17,8 @@ parser.add_argument("--dataset", default="wildlife", choices=list(DATASETS))
 parser.add_argument("--img-size", type=int, default=None, help="override the dataset's default")
 parser.add_argument("--aug", default="D", choices=["A", "B", "C", "D"], help="train.py wala --aug")
 parser.add_argument("--backbone", default="vit", choices=["vit", "conv"], help="train.py wala --backbone")
-parser.add_argument("--split", default="test", choices=["val", "test"])
+parser.add_argument("--split", default=None, choices=["val", "test"],
+                    help="default: test (agar dataset mein hai), warna val (e.g. foci)")
 parser.add_argument("--ckpt", default="best", choices=["best", "last"])
 parser.add_argument("--conf", type=float, default=0.001, help="NMS confidence threshold")
 args = parser.parse_args()
@@ -28,6 +28,11 @@ DS = DATASETS[args.dataset]
 IMG_SIZE = args.img_size or DS["img_size"]
 CLASS_NAMES, DATA_ROOT = DS["classes"], DS["root"]
 NUM_CLASSES = len(CLASS_NAMES)
+
+# split: user ne diya to wahi, warna test (agar is dataset mein hai), warna val
+SPLITS = DS.get("splits", ("train", "val", "test"))
+args.split = args.split or ("test" if "test" in SPLITS else "val")
+assert args.split in SPLITS, f"{args.dataset} mein '{args.split}' split nahi hai (splits: {SPLITS})"
 
 USE_P2 = False
 BATCH_SIZE = 4
@@ -59,8 +64,12 @@ def targets_to_xyxy(t, size):
 
 @torch.no_grad()
 def evaluate():
+
     metric = MeanAveragePrecision(box_format="xyxy", iou_type="bbox", class_metrics=True)
+    # alag metric sirf IoU 0.25 ke liye (main 'map' ko 0.25 se kharab na kare)
+    metric25 = MeanAveragePrecision(box_format="xyxy", iou_type="bbox", iou_thresholds=[0.25])
     metric.warn_on_many_detections = False
+    metric25.warn_on_many_detections = False
 
     for images, targets, _ in loader:
         # AMP for inference/evaluation
@@ -78,19 +87,23 @@ def evaluate():
             gts.append({"boxes": boxes, "labels": labels})
 
         metric.update(preds, gts)
+        metric25.update(preds, gts)
 
-    return metric.compute()
+    return metric.compute(), metric25.compute()
 
 
 if __name__ == "__main__":
-    r = evaluate()
+    r, r25 = evaluate()
     print(f"mAP@[.5:.95] : {r['map'].item():.4f}")
+    print(f"mAP@0.25     : {r25['map'].item():.4f}")
     print(f"mAP@0.5      : {r['map_50'].item():.4f}")
     print(f"mAP@0.75     : {r['map_75'].item():.4f}")
     print(f"mAP small    : {r['map_small'].item():.4f}   (-1 = is size ka koi GT nahi)")
     print(f"mAP medium   : {r['map_medium'].item():.4f}")
     print(f"mAP large    : {r['map_large'].item():.4f}")
     print(f"mAR@100      : {r['mar_100'].item():.4f}")
+    print(f"mAP@0.25 small/medium/large : {r25['map_small'].item():.4f} / "
+          f"{r25['map_medium'].item():.4f} / {r25['map_large'].item():.4f}")
 
     if r["map_per_class"].numel() > 1:
         print("per-class mAP@[.5:.95]:")
@@ -98,5 +111,6 @@ if __name__ == "__main__":
             print(f"  {CLASS_NAMES[c]:10s} {ap:.4f}")
 
     # ablation table mein paste karne ke liye ek line
-    print(f"\nTABLE | {TAG} | {args.split} {args.ckpt} | mAP@0.5 {r['map_50'].item():.4f} "
-          f"| mAP {r['map'].item():.4f} | mAP@0.75 {r['map_75'].item():.4f} | mAR@100 {r['mar_100'].item():.4f}")
+    print(f"\nTABLE | {TAG} | {args.split} {args.ckpt} | mAP@0.25 {r25['map'].item():.4f} "
+          f"| mAP@0.5 {r['map_50'].item():.4f} | mAP {r['map'].item():.4f} "
+          f"| mAP@0.75 {r['map_75'].item():.4f} | mAR@100 {r['mar_100'].item():.4f}")
