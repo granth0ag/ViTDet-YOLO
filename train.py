@@ -53,7 +53,7 @@ scaler = torch.amp.GradScaler("cuda") if device == "cuda" else None
 random.seed(SEED); np.random.seed(SEED); torch.manual_seed(SEED)
 SPLITS = DS.get("splits", ("train", "val", "test"))
 # ---------------- data ----------------
-train_loader, val_loader, _ = build_folder_loaders(
+train_loader, val_loader = build_folder_loaders(
     DATA_ROOT, splits=SPLITS, batch_size=BATCH_SIZE,
     img_size=IMG_SIZE, augment=True, num_workers=NUM_WORKERS, aug=AUG)
 print(f"run: {TAG} | backbone={args.backbone} | aug {RUN}: {AUG}")
