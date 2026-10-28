@@ -1,28 +1,39 @@
-# prepare_foci.py
+
 """
-FOCI (virus patch detection, Pascal VOC-style XML) -> YOLO format, same layout as prepare_voc.py:
+FOCI (virus patch detection, Pascal VOC-style XML) -> YOLO format.
 
-    <BASE>/foci/images/{train,val}/*.jpg
-    <BASE>/foci/labels/{train,val}/*.txt      (class_id cx cy w h, normalized, class_id 0 = virus)
+Uses ONLY:
+    <RAW>/JPEGImages/JPEGImages/
+    <RAW>/Virus_anno/Annotations/
 
-Raw dataset structure:
-    <raw>/JPEGImages/JPEGImages/
-    <raw>/Virus_anno/Annotations/
+Ignores:
+    <RAW>/Xml_cell/
+    <RAW>/cell_Pic1/
+    <RAW>/test/
 
-    The sibling directories cell_Pic1/ and Xml_cell/ are not used.
-    The test/ directory is not used because an official test split has not been confirmed.
+Output:
+    <BASE>/foci/images/train/*.jpg
+    <BASE>/foci/images/val/*.jpg
+    <BASE>/foci/labels/train/*.txt
+    <BASE>/foci/labels/val/*.txt
+    <BASE>/foci/_check/*.jpg
 
-Split:
-    Original image/XML pairs are shuffled with seed=42 and split into 90% train / 10% validation.
-    No separate test split is created. Augmentation and resizing are handled by the training pipeline.
+YOLO label format:
+    class_id cx cy w h
 
-Usage (from the project root):
-    python prepare_foci.py --raw /path/to/Foci_Dataset
-    python prepare_foci.py --raw /path/to/Foci_Dataset --val-ratio 0.1 --seed 42 --force
-    python prepare_foci.py --img-dir /x/JPEGImages/JPEGImages --ann-dir /x/Virus_anno/Annotations
+There is exactly one class:
+    virus = 0
 
-The CLASSES list below must match DATASETS["foci"]["classes"] in src/dataset.py.
+Images are NOT resized. Their original dimensions are retained.
+The expected original image size is 1024 x 768 x 3.
+
+By default:
+    - all images found under JPEGImages/JPEGImages are used
+    - a fixed-seed random validation split is created
+    - difficult objects are ALWAYS kept
+    - no separate test split is created
 """
+
 import argparse
 import json
 import os
@@ -40,233 +51,619 @@ except ImportError:
     def tqdm(x, **kw):
         return x
 
-# ---------------- output paths (same BASE logic as prepare_voc.py) ----------------
-BASE = Path("/kaggle/temp") if Path("/kaggle").exists() else Path("data")
+
+# ---------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------
+
+# Output is intentionally kept in the project data directory, just like
+# the requested VOC layout:
+#
+#     data/foci/images/train
+#     data/foci/images/val
+#     data/foci/labels/train
+#     data/foci/labels/val
+#     data/foci/_check
+#
+BASE = Path("data")
 OUT = BASE / "foci"
 
+# RAW is discovered automatically below. If you prefer a fixed location,
+# replace this with the folder containing JPEGImages/ and Virus_anno/.
+RAW = BASE / "foci_raw"
+IMAGE_RAW = RAW / "JPEGImages" / "JPEGImages"
+ANNOTATION_RAW = RAW / "Virus_anno" / "Annotations"
+
 CLASSES = ["virus"]
-CLASS_ID = {c: i for i, c in enumerate(CLASSES)}
-IMG_EXTS = {".jpg", ".jpeg", ".png"}
-
-EXPECTED_BOXES = 4216          # Expected count from raw annotation analysis; warning only.
+CLASS_ID = {"virus": 0}
 
 
-# ---------------- locate + pair ----------------
-def _find_one(raw, name):
-    """Find a uniquely named directory recursively under the raw dataset path."""
-    raw = Path(raw)
-    hits = sorted(p for p in raw.rglob(name) if p.is_dir())
-    if raw.name == name:
-        hits.insert(0, raw)
-    if not hits:
-        raise SystemExit(f"Directory '{name}/' was not found under {raw}.")
-    if len(hits) > 1:
+
+
+# ---------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------
+
+def find_raw_root():
+    """
+    Finds the FOCI dataset root.
+
+    Expected structure:
+        <raw>/JPEGImages/JPEGImages/
+        <raw>/Virus_anno/Annotations/
+
+    If BASE/foci_raw does not exist, try to locate a directory containing
+    both JPEGImages and Virus_anno below BASE.
+    """
+    if IMAGE_RAW.is_dir() and ANNOTATION_RAW.is_dir():
+        return RAW
+
+    candidates = []
+
+    # Search both the project data directory and Kaggle's mounted input
+    # directory. This allows the script to work directly with a dataset
+    # mounted like:
+    #
+    # /kaggle/input/.../Foci_Dataset/
+    #
+    # without touching Xml_cell, cell_Pic1, or test.
+    search_roots = [BASE]
+    if Path("/kaggle/input").is_dir():
+        search_roots.append(Path("/kaggle/input"))
+
+    for search_root in search_roots:
+        for p in search_root.rglob("JPEGImages"):
+            if not p.is_dir():
+                continue
+
+            # The actual image folder is expected to be JPEGImages/JPEGImages.
+            image_dir = p / "JPEGImages"
+            if not image_dir.is_dir():
+                continue
+
+            root = p.parent
+            anno_dir = root / "Virus_anno" / "Annotations"
+            if anno_dir.is_dir():
+                candidates.append(root)
+
+    if len(candidates) == 1:
+        return candidates[0]
+
+    if len(candidates) > 1:
         raise SystemExit(
-            f"Multiple '{name}/' directories were found: {[str(h) for h in hits]}. "
-            f"Specify the correct directories with --img-dir and --ann-dir."
+            "Multiple possible FOCI roots found:\n"
+            + "\n".join(str(p) for p in candidates)
+            + "\nSet RAW in prepare_foci.py to the correct dataset root."
         )
-    return hits[0]
+
+    raise SystemExit(
+        "FOCI raw dataset not found.\n\n"
+        f"Expected images:      {IMAGE_RAW}\n"
+        f"Expected annotations: {ANNOTATION_RAW}\n\n"
+        "Set RAW in prepare_foci.py to the folder containing "
+        "JPEGImages/ and Virus_anno/."
+    )
 
 
-def find_dirs(raw, img_dir=None, ann_dir=None):
-    """Locate the image and annotation directories in the FOCI dataset structure."""
-    raw = Path(raw) if raw else None
-
-    if img_dir:
-        img_dir = Path(img_dir)
-    elif raw:
-        # Dataset structure: Foci_Dataset/JPEGImages/JPEGImages/
-        img_dir = raw / "JPEGImages" / "JPEGImages"
-    else:
-        img_dir = None
-
-    if ann_dir:
-        ann_dir = Path(ann_dir)
-    elif raw:
-        # Dataset structure: Foci_Dataset/Virus_anno/Annotations/
-        ann_dir = raw / "Virus_anno" / "Annotations"
-    else:
-        ann_dir = None
-
-    if img_dir is None or not img_dir.is_dir():
-        raise SystemExit(f"Image directory not found: {img_dir}")
-    if ann_dir is None or not ann_dir.is_dir():
-        raise SystemExit(f"Annotation directory not found: {ann_dir}")
-    print(f"images:      {img_dir}\nannotations: {ann_dir}")
-    return img_dir, ann_dir
+def image_files(image_dir):
+    """Return all supported image files recursively."""
+    exts = {
+        ".jpg", ".jpeg", ".JPG", ".JPEG",
+        ".tif", ".tiff", ".TIF", ".TIFF",
+    }
+    return sorted(
+        p for p in image_dir.rglob("*")
+        if p.is_file() and p.suffix in exts
+    )
 
 
-def pair_files(img_dir, ann_dir):
-    """Match XML files to images by file stem. Returns sorted [(stem, img_path, xml_path)]."""
-    imgs = {}
-    for p in sorted(img_dir.iterdir()):
-        if p.is_file() and p.suffix.lower() in IMG_EXTS:
-            imgs.setdefault(p.stem, p)
-    xmls = sorted(p for p in ann_dir.iterdir() if p.is_file() and p.suffix.lower() == ".xml")
+def annotation_for_image(annotation_dir, image_path):
+    """
+    Find the XML annotation corresponding to an image.
 
-    pairs, no_image = [], []
-    for x in xmls:
-        if x.stem in imgs:
-            pairs.append((x.stem, imgs[x.stem], x))
-        else:
-            no_image.append(x.name)
-    no_xml = sorted(set(imgs) - {s for s, _, _ in pairs})
+    First tries the exact image stem:
+        abc.jpg -> abc.xml
 
-    print(f"found: {len(imgs)} images, {len(xmls)} xmls -> {len(pairs)} pairs")
-    if no_image:
-        print(f"WARNING: {len(no_image)} xml files have no image (skipped), e.g. {no_image[:3]}")
-    if no_xml:
-        print(f"WARNING: {len(no_xml)} images have no xml (skipped), e.g. {no_xml[:3]}")
-    if not pairs:
-        raise SystemExit("No image/XML pairs found. Check --img-dir / --ann-dir.")
-    return pairs
+    Then recursively searches for that stem if the annotations are nested.
+    """
+    exact = annotation_dir / f"{image_path.stem}.xml"
+    if exact.exists():
+        return exact
+
+    matches = list(annotation_dir.rglob(f"{image_path.stem}.xml"))
+
+    if len(matches) == 1:
+        return matches[0]
+
+    if len(matches) == 0:
+        raise SystemExit(
+            f"No annotation XML found for image: {image_path.name}"
+        )
+
+    raise SystemExit(
+        f"Multiple annotation XML files found for {image_path.name}:\n"
+        + "\n".join(str(p) for p in matches)
+    )
 
 
-# ---------------- conversion ----------------
-def convert(img, xml, keep_difficult, seen_names):
-    """Returns label lines. Boxes: VOC 1-based inclusive pixels -> normalized cx cy w h."""
-    with Image.open(img) as im:
-        W, H = im.size                                     # real image size (the dataloader sees this too)
-    root = ET.parse(xml).getroot()
+# ---------------------------------------------------------------------
+# VOC XML -> YOLO conversion
+# ---------------------------------------------------------------------
+
+def convert(image_path, annotation_path, keep_difficult=True):
+    """
+    Returns:
+        (YOLO label lines, image path)
+
+    VOC boxes:
+        xmin, ymin, xmax, ymax
+
+    YOLO:
+        class_id cx cy w h
+
+    Coordinates are normalized to [0, 1].
+
+    FOCI has one class only:
+        virus -> class 0
+
+    Difficult objects are always kept.
+    """
+    with Image.open(image_path) as im:
+        W, H = im.size
+        channels = len(im.getbands())
+
+
+
+    if channels != 3:
+        raise SystemExit(
+            f"{image_path.name}: expected 3-channel image, got {channels} channels"
+        )
+
+    root = ET.parse(annotation_path).getroot()
 
     lines = []
+
     for obj in root.iter("object"):
-        name = (obj.findtext("name") or "").strip()
-        seen_names[name] += 1                              # single-class dataset: every box -> class 0
-        if int((obj.findtext("difficult") or "0").strip()) and not keep_difficult:
-            continue
+        name = (obj.findtext("name") or "").strip().lower()
+
+        if name != "virus":
+            raise SystemExit(
+                f"unknown class '{name}' in {annotation_path.name}; "
+                "FOCI is expected to contain only the class 'virus'"
+            )
+
+        # DO NOT discard difficult objects.
+        # The argument is retained only to make the function mirror
+        # prepare_voc.py's interface.
+        if not keep_difficult:
+            # Intentionally never used by main; difficult objects are kept.
+            pass
+
         bb = obj.find("bndbox")
-        xmin, ymin, xmax, ymax = (float(bb.findtext(k)) for k in ("xmin", "ymin", "xmax", "ymax"))
-        x1, y1 = max(0.0, xmin - 1), max(0.0, ymin - 1)    # 1-based inclusive -> 0-based edges
-        x2, y2 = min(float(W), xmax), min(float(H), ymax)
+        if bb is None:
+            continue
+
+        try:
+            xmin = float(bb.findtext("xmin"))
+            ymin = float(bb.findtext("ymin"))
+            xmax = float(bb.findtext("xmax"))
+            ymax = float(bb.findtext("ymax"))
+        except (TypeError, ValueError):
+            raise SystemExit(
+                f"Invalid bounding box in {annotation_path.name}"
+            )
+
+        # VOC-style 1-based inclusive coordinates -> 0-based edges.
+        x1 = max(0.0, xmin - 1.0)
+        y1 = max(0.0, ymin - 1.0)
+        x2 = min(float(W), xmax)
+        y2 = min(float(H), ymax)
+
         if x2 <= x1 or y2 <= y1:
             continue
-        lines.append(f"0 {(x1 + x2) / 2 / W:.6f} {(y1 + y2) / 2 / H:.6f} "
-                     f"{(x2 - x1) / W:.6f} {(y2 - y1) / H:.6f}")
-    return lines
 
+        cx = ((x1 + x2) / 2.0) / W
+        cy = ((y1 + y2) / 2.0) / H
+        w = (x2 - x1) / W
+        h = (y2 - y1) / H
+
+        lines.append(
+            f"0 {cx:.6f} {cy:.6f} {w:.6f} {h:.6f}"
+        )
+
+    return lines, image_path
+
+
+# ---------------------------------------------------------------------
+# Image placement
+# ---------------------------------------------------------------------
 
 def place(src, dst):
-    """Hard link (no extra disk), copy if linking is not possible."""
+    """
+    Hard-link the image when possible to avoid an unnecessary duplicate.
+    Fall back to a normal copy if hard links are unavailable.
+    """
     if dst.exists():
         return
+
     try:
         os.link(src, dst)
     except OSError:
         shutil.copy2(src, dst)
 
 
-def write_split(split, items, keep_difficult, seen_names):
+# ---------------------------------------------------------------------
+# Split writing
+# ---------------------------------------------------------------------
+
+def write_split(split, items):
     (OUT / "images" / split).mkdir(parents=True, exist_ok=True)
     (OUT / "labels" / split).mkdir(parents=True, exist_ok=True)
-    stats = {"images": 0, "boxes": 0, "empty": 0}
-    for stem, img, xml in tqdm(items, desc=split):
-        lines = convert(img, xml, keep_difficult, seen_names)
-        place(img, OUT / "images" / split / f"{stem}{img.suffix.lower()}")
-        (OUT / "labels" / split / f"{stem}.txt").write_text("\n".join(lines) + ("\n" if lines else ""))
+
+    stats = {
+        "images": 0,
+        "boxes": 0,
+        "empty": 0,
+        "per_class": Counter(),
+    }
+
+    for image_path, annotation_path in tqdm(items, desc=split):
+        lines, img = convert(
+            image_path,
+            annotation_path,
+            keep_difficult=True,
+        )
+
+        # Keep a simple unique name based on the image filename.
+        # If duplicate stems exist, fail instead of silently overwriting.
+        name = image_path.stem
+
+        dst_img = OUT / "images" / split / f"{name}.jpg"
+        dst_lbl = OUT / "labels" / split / f"{name}.txt"
+
+        if dst_img.exists() or dst_lbl.exists():
+            raise SystemExit(
+                f"Duplicate output filename detected: {name}. "
+                "The raw dataset contains duplicate image stems."
+            )
+
+        place(img, dst_img)
+        dst_lbl.write_text(
+            "\n".join(lines) + ("\n" if lines else "")
+        )
+
         stats["images"] += 1
         stats["boxes"] += len(lines)
         stats["empty"] += int(not lines)
+        stats["per_class"].update(
+            int(line.split()[0]) for line in lines
+        )
+
     return stats
 
 
-# ---------------- checks ----------------
+# ---------------------------------------------------------------------
+# Checks
+# ---------------------------------------------------------------------
+
 def verify():
-    """Image/label pairing, class ids, coordinate ranges, no train/val overlap."""
-    stems = {}
+    """Check image/label pairing, class IDs, coordinates and split overlap."""
+
     for split in ("train", "val"):
-        imgs = {p.stem for p in (OUT / "images" / split).iterdir()}
-        lbls = {p.stem for p in (OUT / "labels" / split).iterdir()}
-        assert imgs == lbls, f"{split}: images and labels do not match"
-        stems[split] = imgs
-        for f in (OUT / "labels" / split).glob("*.txt"):
+        img_dir = OUT / "images" / split
+        lbl_dir = OUT / "labels" / split
+
+        imgs = {p.stem for p in img_dir.iterdir() if p.is_file()}
+        lbls = {p.stem for p in lbl_dir.iterdir() if p.is_file()}
+
+        assert imgs == lbls, (
+            f"{split}: images and labels do not match"
+        )
+
+        for f in lbl_dir.glob("*.txt"):
             for line in f.read_text().splitlines():
                 c, cx, cy, w, h = line.split()
-                assert 0 <= int(c) < len(CLASSES), f"{f.name}: class id {c}"
-                assert all(0.0 <= float(v) <= 1.0 for v in (cx, cy, w, h)), f"{f.name}: coords outside [0,1]"
-                assert float(w) > 0 and float(h) > 0, f"{f.name}: zero-size box"
-    assert not (stems["train"] & stems["val"]), "train and val overlap"
-    print("checks ok: pairing, class ids, coordinates, no overlap between splits")
 
+                assert 0 <= int(c) < len(CLASSES), (
+                    f"{f.name}: invalid class id {c}"
+                )
+
+                assert all(
+                    0.0 <= float(v) <= 1.0
+                    for v in (cx, cy, w, h)
+                ), (
+                    f"{f.name}: coordinates outside [0, 1]"
+                )
+
+                assert float(w) > 0 and float(h) > 0, (
+                    f"{f.name}: zero-size box"
+                )
+
+    tr = {
+        p.stem
+        for p in (OUT / "images" / "train").iterdir()
+        if p.is_file()
+    }
+    va = {
+        p.stem
+        for p in (OUT / "images" / "val").iterdir()
+        if p.is_file()
+    }
+
+    assert not (tr & va), "train and val splits overlap"
+
+    print(
+        "checks ok: pairing, class ids, coordinates, "
+        "no train/val overlap"
+    )
+
+
+# ---------------------------------------------------------------------
+# Visual sanity checks
+# ---------------------------------------------------------------------
 
 def save_checks(n):
-    """n random train images with boxes drawn -> <OUT>/_check/ (for eyeballing)."""
+    """
+    Draw converted YOLO boxes on n random training images.
+
+    Saved to:
+        <OUT>/_check/
+    """
     if n <= 0:
         return
+
     chk = OUT / "_check"
     chk.mkdir(exist_ok=True)
-    files = sorted((OUT / "images" / "train").iterdir())
-    for p in random.Random(0).sample(files, min(n, len(files))):
+
+    files = sorted(
+        p for p in (OUT / "images" / "train").iterdir()
+        if p.is_file()
+    )
+
+    if not files:
+        print("no training images available for visual checks")
+        return
+
+    rng = random.Random(0)
+    selected = rng.sample(files, min(n, len(files)))
+
+    for p in selected:
         im = Image.open(p).convert("RGB")
         W, H = im.size
         d = ImageDraw.Draw(im)
-        for line in (OUT / "labels" / "train" / f"{p.stem}.txt").read_text().splitlines():
+
+        label_file = OUT / "labels" / "train" / f"{p.stem}.txt"
+
+        for line in label_file.read_text().splitlines():
             c, cx, cy, w, h = line.split()
-            cx, cy, w, h = float(cx) * W, float(cy) * H, float(w) * W, float(h) * H
-            d.rectangle([cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2], outline="lime", width=2)
-            d.text((cx - w / 2 + 3, cy - h / 2 + 3), CLASSES[int(c)], fill="yellow")
+
+            cx = float(cx) * W
+            cy = float(cy) * H
+            w = float(w) * W
+            h = float(h) * H
+
+            x1 = cx - w / 2
+            y1 = cy - h / 2
+            x2 = cx + w / 2
+            y2 = cy + h / 2
+
+            d.rectangle(
+                [x1, y1, x2, y2],
+                outline="lime",
+                width=2,
+            )
+
+            d.text(
+                (x1 + 3, y1 + 3),
+                CLASSES[int(c)],
+                fill="yellow",
+            )
+
         im.save(chk / f"{p.stem}.jpg")
+
     print(f"box-check images saved in {chk}")
 
 
-# ---------------- main ----------------
+# ---------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--raw", help="path to Foci_Dataset (contains JPEGImages/ and Virus_anno/)")
-    ap.add_argument("--img-dir", help="override image directory")
-    ap.add_argument("--ann-dir", help="override annotation directory")
-    ap.add_argument("--val-ratio", type=float, default=0.1, help="fraction of pairs held out for validation")
-    ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--keep-difficult", action="store_true", help="keep objects flagged difficult (default: drop)")
-    ap.add_argument("--force", action="store_true", help="delete existing output and rebuild")
-    ap.add_argument("--check", type=int, default=8, help="number of box-check images (0 = skip)")
+
+    ap.add_argument(
+        "--val-size",
+        type=int,
+        default=14,
+        help="number of images held out for validation",
+    )
+
+    ap.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="random seed used for the train/val split",
+    )
+
+    ap.add_argument(
+        "--force",
+        action="store_true",
+        help="delete existing output and rebuild it",
+    )
+
+    ap.add_argument(
+        "--cleanup",
+        action="store_true",
+        help="delete raw FOCI data after preparation",
+    )
+
+    ap.add_argument(
+        "--check",
+        type=int,
+        default=8,
+        help="number of train images for visual box checks (0 = skip)",
+    )
+
     args = ap.parse_args()
 
-    if not (0.0 < args.val_ratio < 1.0):
-        raise SystemExit("--val-ratio must be between 0 and 1")
-    if not (args.raw or (args.img_dir and args.ann_dir)):
-        raise SystemExit("Provide --raw, or both --img-dir and --ann-dir.")
+    # Locate raw dataset.
+    global RAW, IMAGE_RAW, ANNOTATION_RAW
 
-    opts = {"val_ratio": args.val_ratio, "seed": args.seed, "keep_difficult": args.keep_difficult}
+    RAW = find_raw_root()
+    IMAGE_RAW = RAW / "JPEGImages" / "JPEGImages"
+    ANNOTATION_RAW = RAW / "Virus_anno" / "Annotations"
+
+    if not IMAGE_RAW.is_dir():
+        raise SystemExit(f"image directory not found: {IMAGE_RAW}")
+
+    if not ANNOTATION_RAW.is_dir():
+        raise SystemExit(
+            f"annotation directory not found: {ANNOTATION_RAW}"
+        )
+
+    images = image_files(IMAGE_RAW)
+
+    if not images:
+        raise SystemExit(f"no supported image files found under {IMAGE_RAW}")
+
+    print(f"raw image directory: {IMAGE_RAW}")
+    print(f"raw annotation directory: {ANNOTATION_RAW}")
+    print(f"found {len(images)} images")
+
+    # Resolve image -> XML pairs.
+    # Skip images that do not have an annotation instead of stopping
+    # the entire preparation process.
+    items = []
+    missing_annotations = []
+
+    for image_path in images:
+        exact = ANNOTATION_RAW / f"{image_path.stem}.xml"
+
+        if exact.exists():
+            annotation_path = exact
+        else:
+            matches = list(
+                ANNOTATION_RAW.rglob(f"{image_path.stem}.xml")
+            )
+
+            if len(matches) == 1:
+                annotation_path = matches[0]
+            elif len(matches) == 0:
+                missing_annotations.append(image_path.name)
+                continue
+            else:
+                raise SystemExit(
+                    f"Multiple annotation XML files found for {image_path.name}:\n"
+                    + "\n".join(str(p) for p in matches)
+                )
+
+        items.append((image_path, annotation_path))
+
+    if missing_annotations:
+        print(
+            f"skipping {len(missing_annotations)} image(s) without annotation:"
+        )
+        for name in missing_annotations:
+            print(f"  - {name}")
+
+    print(f"using {len(items)} annotated images")
+
+    if args.val_size <= 0:
+        raise SystemExit("--val-size must be greater than 0")
+
+    if not items:
+        raise SystemExit("no annotated images found")
+
+    if args.val_size >= len(items):
+        raise SystemExit(
+            f"--val-size={args.val_size} must be smaller than "
+            f"the number of annotated images ({len(items)})"
+        )
+
+    # Deterministic split.
+    items.sort(key=lambda x: x[0].name)
+    random.Random(args.seed).shuffle(items)
+
+    val_items = items[:args.val_size]
+    train_items = items[args.val_size:]
+
+    opts = {
+        "val_size": args.val_size,
+        "seed": args.seed,
+        "keep_difficult": True,
+        "class": "virus",
+        "image_size": [1024, 768, 3],
+    }
+
     marker = OUT / ".done"
+
     if args.force and OUT.exists():
         shutil.rmtree(OUT)
+
     if marker.exists():
         prev = json.loads(marker.read_text())
+
         if prev["options"] == opts:
-            print(f"{OUT} already exists: {prev['counts']}")
+            print(
+                f"{OUT} already prepared: {prev['counts']}"
+            )
             return
-        raise SystemExit(f"{OUT} was built with different options {prev['options']}. Use --force to rebuild.")
+
+        raise SystemExit(
+            f"{OUT} was created with different options: "
+            f"{prev['options']}. Use --force to rebuild."
+        )
+
     if OUT.exists():
-        shutil.rmtree(OUT)                                 # previous run was interrupted
+        shutil.rmtree(OUT)
 
-    img_dir, ann_dir = find_dirs(args.raw, args.img_dir, args.ann_dir)
-    pairs = pair_files(img_dir, ann_dir)                   # sorted -> deterministic before the shuffle
-
-    random.Random(args.seed).shuffle(pairs)
-    n_val = max(1, round(len(pairs) * args.val_ratio))
-    val_items, train_items = pairs[:n_val], pairs[n_val:]
-
-    seen_names = Counter()
+    # Write train and validation only.
     counts = {}
-    for split, items in (("train", train_items), ("val", val_items)):
-        s = write_split(split, items, args.keep_difficult, seen_names)
-        counts[split] = s
-        print(f"{split}: {s['images']} images | {s['boxes']} boxes | {s['empty']} images with no boxes")
 
-    print("object names in XML (all mapped to class 0):", dict(seen_names))
-    unexpected = [n for n in seen_names if n not in CLASS_ID]
-    if unexpected:
-        print(f"WARNING: names not in CLASSES {CLASSES}: {unexpected}. Confirm they are all virus patches.")
+    for split, split_items in (
+        ("train", train_items),
+        ("val", val_items),
+    ):
+        s = write_split(split, split_items)
 
-    total = sum(c["boxes"] for c in counts.values())
-    if total != EXPECTED_BOXES:
-        print(f"WARNING: wrote {total} boxes, expected {EXPECTED_BOXES} "
-              f"(difficult objects dropped or clipped boxes can explain a gap)")
+        counts[split] = {
+            "images": s["images"],
+            "boxes": s["boxes"],
+            "empty": s["empty"],
+        }
+
+        print(
+            f"{split}: {s['images']} images | "
+            f"{s['boxes']} boxes | "
+            f"{s['empty']} images with no boxes"
+        )
+
+        if split == "train":
+            print(
+                "  boxes per class (train):",
+                ", ".join(
+                    f"{CLASSES[c]} {n}"
+                    for c, n in sorted(s["per_class"].items())
+                ),
+            )
 
     verify()
     save_checks(args.check)
-    marker.write_text(json.dumps({"options": opts, "counts": counts}))
+
+    marker.write_text(
+        json.dumps(
+            {
+                "options": opts,
+                "counts": counts,
+            },
+            indent=2,
+        )
+    )
+
+    if args.cleanup:
+        shutil.rmtree(RAW)
+        print("raw data deleted")
+
     print(f"done -> {OUT}")
 
 

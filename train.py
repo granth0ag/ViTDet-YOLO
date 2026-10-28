@@ -51,10 +51,10 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 scaler = torch.amp.GradScaler("cuda") if device == "cuda" else None
 
 random.seed(SEED); np.random.seed(SEED); torch.manual_seed(SEED)
-
+SPLITS = DS.get("splits", ("train", "val", "test"))
 # ---------------- data ----------------
 train_loader, val_loader, _ = build_folder_loaders(
-    DATA_ROOT, splits=("train", "val", "test"), batch_size=BATCH_SIZE,
+    DATA_ROOT, splits=SPLITS, batch_size=BATCH_SIZE,
     img_size=IMG_SIZE, augment=True, num_workers=NUM_WORKERS, aug=AUG)
 print(f"run: {TAG} | backbone={args.backbone} | aug {RUN}: {AUG}")
 print(f"epochs={EPOCHS} close_mosaic={CLOSE_MOSAIC} eval_every={EVAL_EVERY}")
