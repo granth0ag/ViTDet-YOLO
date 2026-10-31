@@ -474,7 +474,7 @@ def main():
     ap.add_argument(
         "--val-size",
         type=int,
-        default=14,
+        default=15,
         help="number of images held out for validation",
     )
 

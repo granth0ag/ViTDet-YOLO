@@ -16,7 +16,13 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--dataset", default="wildlife", choices=list(DATASETS))
 parser.add_argument("--img-size", type=int, default=None, help="override the dataset's default")
 parser.add_argument("--aug", default="D", choices=["A", "B", "C", "D"], help="train.py wala --aug")
-parser.add_argument("--backbone", default="vit", choices=["vit", "conv"], help="train.py wala --backbone")
+# CHANGED: --backbone hata diya (vit_conv scrap), patch-embed flags add kiye
+parser.add_argument("--patch-embed", default="linear", choices=["linear", "conv"],
+                    help="train.py wala --patch-embed")
+parser.add_argument("--pe-ckpt", default=None,
+                    help="train.py wala --pe-ckpt. SIRF run_tag (checkpoint ka naam) ke liye; "
+                         "weights yahan load nahi hote, full checkpoint mein pehle se hain")
+parser.add_argument("--seed", type=int, default=42, help="train.py wala --seed")
 parser.add_argument("--split", default=None, choices=["val", "test"],
                     help="default: test (agar dataset mein hai), warna val (e.g. foci)")
 parser.add_argument("--ckpt", default="best", choices=["best", "last"])
@@ -38,7 +44,8 @@ USE_P2 = False
 BATCH_SIZE = 4
 IOU_THRES = 0.65
 
-TAG = run_tag(args.dataset, IMG_SIZE, USE_P2, args.backbone, args.aug)
+# CHANGED: naya run_tag signature (patch_embed, pe_ckpt, aug, seed)
+TAG = run_tag(args.dataset, IMG_SIZE, USE_P2, args.patch_embed, args.pe_ckpt, args.aug, args.seed)
 CKPT = f"{args.ckpt}_{TAG}.pt"
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -50,7 +57,8 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"{TAG} | {args.split}: {len(loader.dataset)} images | checkpoint: {CKPT} | conf {args.conf}")
 
 # ---------------- model ----------------
-model = build_model(IMG_SIZE, NUM_CLASSES, use_p2=USE_P2, backbone=args.backbone).to(device)
+# CHANGED: pe_ckpt yahan PASS NAHI karte; load_state_dict fine-tuned patch-embed weights la deta hai
+model = build_model(IMG_SIZE, NUM_CLASSES, use_p2=USE_P2, patch_embed=args.patch_embed).to(device)
 model.load_state_dict(torch.load(CKPT, map_location=device))
 model.eval()
 
@@ -110,7 +118,7 @@ if __name__ == "__main__":
         for c, ap in zip(r["classes"].tolist(), r["map_per_class"].tolist()):
             print(f"  {CLASS_NAMES[c]:10s} {ap:.4f}")
 
-    # ablation table mein paste karne ke liye ek line
+    # ablation table mein paste karne ke liye ek line (TAG mein ab seed bhi hai)
     print(f"\nTABLE | {TAG} | {args.split} {args.ckpt} | mAP@0.25 {r25['map'].item():.4f} "
           f"| mAP@0.5 {r['map_50'].item():.4f} | mAP {r['map'].item():.4f} "
           f"| mAP@0.75 {r['map_75'].item():.4f} | mAR@100 {r['mar_100'].item():.4f}")

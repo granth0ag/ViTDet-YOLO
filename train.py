@@ -16,8 +16,13 @@ from src.utils.tb_utils import evaluate_map, detection_images
 # ---------------- args ----------------
 ap = argparse.ArgumentParser()
 ap.add_argument("--aug", default="D", choices=list(AUG_PRESETS), help="augmentation preset")
-ap.add_argument("--backbone", default="vit", choices=["vit", "conv"],
-                help="vit = original, conv = LocalViT-style conv MLP")
+
+ap.add_argument("--patch-embed", default="linear", choices=["linear", "conv"])
+ap.add_argument("--pe-ckpt", default=None, help="pretrained patch-embed weights (conv only)")
+ap.add_argument("--lr-pe", type=float, default=1e-3, help="LR for the conv patch embed")
+ap.add_argument("--seed", type=int, default=42)
+ap.add_argument("--backbone", default="vit", choices=["vit", "conv"], help="ViT backbone type")
+
 ap.add_argument("--epochs", type=int, default=60)
 ap.add_argument("--close-mosaic", type=int, default=10, help="aakhri itne epochs mein mosaic + mixup band")
 ap.add_argument("--eval-every", type=int, default=5)
@@ -36,13 +41,13 @@ LR_HEAD = 1e-3
 WEIGHT_DECAY = 0.05
 DROP_PATH = 0.1
 USE_P2 = False            # True = stride-4 level (evaluate.py / inference.py mein SAME hona chahiye)
-SEED = 42
+SEED = args.seed
 NUM_WORKERS = 4
 DS = DATASETS[args.dataset]
 IMG_SIZE = args.img_size or DS["img_size"]
 CLASS_NAMES, DATA_ROOT = DS["classes"], DS["root"]
 NUM_CLASSES = len(CLASS_NAMES)
-TAG = run_tag(args.dataset, IMG_SIZE, USE_P2, args.backbone, args.aug)
+TAG = run_tag(args.dataset, IMG_SIZE, USE_P2, args.patch_embed, args.pe_ckpt, args.aug, SEED)
 RUN = args.aug
 AUG = AUG_PRESETS[RUN]
 LOG_DIR = f"runs/{TAG}"
@@ -62,17 +67,32 @@ print(f"train: {len(train_loader.dataset)} | val: {len(val_loader.dataset)} imag
 
 # ---------------- model ----------------
 model = build_model(IMG_SIZE, NUM_CLASSES, use_p2=USE_P2, drop_path_rate=DROP_PATH,
-                    backbone=args.backbone).to(device)
+                    patch_embed=args.patch_embed, pe_ckpt=args.pe_ckpt).to(device)
 criterion = DetectionLoss(model)                 # model .to(device) ke BAAD
 
+
+
+
+pe_params = list(model.backbone.vit.patch_embed.parameters())
+pe_ids = {id(p) for p in pe_params}
+rest = [p for p in model.backbone.parameters() if id(p) not in pe_ids]
+LR_PE = args.lr_pe if args.patch_embed == "conv" else LR_BACKBONE
+
 optimizer = torch.optim.AdamW([
-    {"params": model.backbone.parameters(), "lr": LR_BACKBONE},
-    {"params": model.neck.parameters(),     "lr": LR_HEAD},
-    {"params": model.head.parameters(),     "lr": LR_HEAD},
+    {"params": rest,                    "lr": LR_BACKBONE},   # groups 0,1,2 keep their meaning
+    {"params": model.neck.parameters(), "lr": LR_HEAD},       # for your TensorBoard logging
+    {"params": model.head.parameters(), "lr": LR_HEAD},
+    {"params": pe_params,               "lr": LR_PE},
 ], weight_decay=WEIGHT_DECAY)
+assert sum(p.numel() for g in optimizer.param_groups for p in g["params"]) == \
+       sum(p.numel() for p in model.parameters())           # no parameter left out
+
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS)
 
 writer = SummaryWriter(LOG_DIR, flush_secs=30)
+
+
+
 
 
 def train_one_epoch():
