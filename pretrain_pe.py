@@ -3,7 +3,8 @@ from pathlib import Path
 from torch.utils.data import DataLoader
 from src.dataset import DATASETS, YoloDataset, collate_fn, IMG_EXT
 from src.model.vit_withConvEmbedding import ConvPatchEmbed
-
+import numpy as np
+import random
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--dataset", default="foci")
@@ -13,10 +14,13 @@ ap.add_argument("--bs", type=int, default=16)
 ap.add_argument("--lr", type=float, default=1e-3)
 ap.add_argument("--img-size", type=int, default=None)
 ap.add_argument("--out", default=None)
-args = ap.parse_args()
+ap.add_argument("--seed", type=int, default=42)
 
+args = ap.parse_args()
+random.seed(args.seed); np.random.seed(args.seed); torch.manual_seed(args.seed)
 DS = DATASETS[args.dataset]; S = args.img_size or DS["img_size"]
-out = args.out or f"pe_{args.mode}_{args.dataset}.pt"
+
+out = args.out or f"pe_{args.mode}_{args.dataset}_s{args.seed}.pt"
 dev = "cuda" if torch.cuda.is_available() else "cpu"
 
 def loader(split, aug):
