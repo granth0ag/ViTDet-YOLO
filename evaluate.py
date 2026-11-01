@@ -1,6 +1,8 @@
 # evaluate.py
-import argparse
+import argparse, csv, time
+from pathlib import Path
 
+import numpy as np
 import torch
 from torchmetrics.detection import MeanAveragePrecision
 
@@ -12,216 +14,146 @@ except ImportError:
 from src.dataset import build_folder_loaders, DATASETS
 from src.model.build import build_model, run_tag
 
-
-# ---------------- args ----------------
-ap = argparse.ArgumentParser()
-
-ap.add_argument("--dataset", default="wildlife", choices=list(DATASETS))
-ap.add_argument("--img-size", type=int, default=None,
-                help="override the dataset's default")
-ap.add_argument("--aug", default="D", choices=["A", "B", "C", "D"],
-                help="train.py wala --aug")
-ap.add_argument("--sac-rates", default="",
-                help="comma-separated rates for SAC")
-ap.add_argument("--seed", type=int, default=42,
-                help="train.py wala --seed")
-ap.add_argument("--split", default=None, choices=["val", "test"],
-                help="default: test if available, otherwise val")
-ap.add_argument("--ckpt", default="best", choices=["best", "last"])
-ap.add_argument("--conf", type=float, default=0.001,
-                help="NMS confidence threshold")
-
-args = ap.parse_args()
-
-
-# ---------------- config ----------------
-rates = tuple(int(r) for r in args.sac_rates.split(",")) if args.sac_rates else None
-
-DS = DATASETS[args.dataset]
-
-IMG_SIZE = args.img_size or DS["img_size"]
-CLASS_NAMES = DS["classes"]
-DATA_ROOT = DS["root"]
-NUM_CLASSES = len(CLASS_NAMES)
-
-USE_P2 = False
-BATCH_SIZE = 4
-IOU_THRES = 0.65
-
-SPLITS = DS.get("splits", ("train", "val", "test"))
-
-if args.split is None:
-    args.split = "test" if "test" in SPLITS else "val"
-
-assert args.split in SPLITS, (
-    f"{args.dataset} mein '{args.split}' split nahi hai "
-    f"(splits: {SPLITS})"
-)
-
-TAG = run_tag(
-    args.dataset,
-    IMG_SIZE,
-    USE_P2,
-    args.aug,
-    args.seed,
-    sac=rates
-)
-
-CKPT = f"{args.ckpt}_{TAG}.pt"
-
+USE_P2, BATCH_SIZE, IOU_THRES = False, 4, 0.65
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 
-# ---------------- data ----------------
-(loader,) = build_folder_loaders(
-    DATA_ROOT,
-    splits=(args.split,),
-    batch_size=BATCH_SIZE,
-    img_size=IMG_SIZE,
-    augment=False,
-    num_workers=2
-)
-
-print(
-    f"{TAG} | {args.split}: {len(loader.dataset)} images "
-    f"| checkpoint: {CKPT} | conf {args.conf}"
-)
-
-
-# ---------------- model ----------------
-model = build_model(
-    IMG_SIZE,
-    NUM_CLASSES,
-    use_p2=USE_P2,
-    sac_rates=rates
-).to(device)
-
-model.load_state_dict(
-    torch.load(CKPT, map_location=device)
-)
-
-model.eval()
-
-
 def targets_to_xyxy(t, size):
-    """[n,5] (cls,cx,cy,w,h) normalized -> xyxy pixels + labels."""
-    cx = t[:, 1] * size
-    cy = t[:, 2] * size
-    w = t[:, 3] * size
-    h = t[:, 4] * size
+    cx, cy, w, h = t[:, 1] * size, t[:, 2] * size, t[:, 3] * size, t[:, 4] * size
+    return torch.stack([cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2], 1), t[:, 0].long()
 
-    boxes = torch.stack([
-        cx - w / 2,
-        cy - h / 2,
-        cx + w / 2,
-        cy + h / 2
-    ], dim=1)
 
-    return boxes, t[:, 0].long()
+def _sync():
+    if device == "cuda":
+        torch.cuda.synchronize()
 
 
 @torch.no_grad()
-def evaluate():
+def evaluate_run(dataset, aug, seed, rates, split, kind, conf, img_size=None):
+    """One checkpoint -> dict of metrics, or None if the checkpoint doesn't exist."""
+    DS = DATASETS[dataset]
+    size = img_size or DS["img_size"]
+    path = f"{kind}_{run_tag(dataset, size, USE_P2, aug, seed, sac=rates)}.pt"
+    if not Path(path).exists():
+        print(f"  [skip] missing {path}")
+        return None
 
-    metric = MeanAveragePrecision(
-        box_format="xyxy",
-        iou_type="bbox",
-        class_metrics=True
-    )
+    (loader,) = build_folder_loaders(DS["root"], splits=(split,), batch_size=BATCH_SIZE,
+                                     img_size=size, augment=False, num_workers=2)
+    model = build_model(size, len(DS["classes"]), use_p2=USE_P2, sac_rates=rates).to(device)
+    model.load_state_dict(torch.load(path, map_location=device))
+    model.eval()
+    params_m = sum(p.numel() for p in model.parameters()) / 1e6
 
-    # Separate metric for IoU = 0.25
-    metric25 = MeanAveragePrecision(
-        box_format="xyxy",
-        iou_type="bbox",
-        iou_thresholds=[0.25]
-    )
+    m = MeanAveragePrecision(box_format="xyxy", iou_type="bbox")
+    m25 = MeanAveragePrecision(box_format="xyxy", iou_type="bbox", iou_thresholds=[0.25])
+    m.warn_on_many_detections = m25.warn_on_many_detections = False
 
-    metric.warn_on_many_detections = False
-    metric25.warn_on_many_detections = False
-
-    for images, targets, _ in loader:
-
+    t_tot, n_img = 0.0, 0
+    for bi, (images, targets, _) in enumerate(loader):
         images = images.to(device)
-
-        with torch.amp.autocast(
-            "cuda",
-            enabled=(device == "cuda")
-        ):
+        _sync(); t0 = time.perf_counter()
+        with torch.amp.autocast("cuda", enabled=(device == "cuda")):
             y, _ = model(images)
+        _sync(); dt = time.perf_counter() - t0
+        if bi >= 3:                                   # skip warm-up batches
+            t_tot += dt; n_img += len(images)
 
-        dets = non_max_suppression(
-            y,
-            conf_thres=args.conf,
-            iou_thres=IOU_THRES
-        )
-
-        preds = []
-        gts = []
-
+        dets = non_max_suppression(y, conf_thres=conf, iou_thres=IOU_THRES)
+        preds, gts = [], []
         for d, t in zip(dets, targets):
+            preds.append({"boxes": d[:, :4].cpu(), "scores": d[:, 4].cpu(),
+                          "labels": d[:, 5].long().cpu()})
+            b, l = targets_to_xyxy(t, size)
+            gts.append({"boxes": b, "labels": l})
+        m.update(preds, gts); m25.update(preds, gts)
 
-            preds.append({
-                "boxes": d[:, :4].cpu(),
-                "scores": d[:, 4].cpu(),
-                "labels": d[:, 5].long().cpu()
-            })
-
-            boxes, labels = targets_to_xyxy(
-                t,
-                IMG_SIZE
-            )
-
-            gts.append({
-                "boxes": boxes,
-                "labels": labels
-            })
-
-        metric.update(preds, gts)
-        metric25.update(preds, gts)
-
-    return metric.compute(), metric25.compute()
+    r, r25 = m.compute(), m25.compute()
+    g = lambda x: float("nan") if x.item() < 0 else x.item()   # -1 = no GT of that size
+    return dict(mAP25=r25["map"].item(), mAP50=r["map_50"].item(), mAP=r["map"].item(),
+                mAP75=r["map_75"].item(), small=g(r["map_small"]), AR100=r["mar_100"].item(),
+                params=params_m, ms=(t_tot / n_img * 1000) if n_img else float("nan"))
 
 
-# ---------------- results ----------------
+# ---------------- table helpers ----------------
+def ms_fmt(vals, d=2, scale=100.0):
+    v = np.array(vals, float) * scale
+    v = v[~np.isnan(v)]
+    if not len(v):
+        return "n/a"
+    return f"{v.mean():.{d}f} ± {(v.std(ddof=1) if len(v) > 1 else 0.0):.{d}f}"
+
+
+def paired_delta(base, other, key="mAP"):
+    diffs = [(other[s][key] - base[s][key]) * 100 for s in other if s in base]
+    if not diffs:
+        return "n/a"
+    wins = sum(d > 0 for d in diffs)
+    return f"{ms_fmt(diffs, scale=1.0)} ({wins}/{len(diffs)} seeds +)"
+
+
+def build_tables(res, names, split, kind):
+    cols = [("mAP@.25", "mAP25"), ("mAP@.5", "mAP50"), ("mAP", "mAP"), ("mAP@.75", "mAP75"),
+            ("mAP small", "small"), ("AR@100", "AR100")]
+    base = res[names[0]]
+    head = "| Config | " + " | ".join(c for c, _ in cols) + " | Params (M) | ms/img | Δ mAP vs baseline (paired) |"
+    sep = "|" + "---|" * (len(cols) + 4)
+    lines = [f"**{split} / {kind} checkpoint** (mAP values ×100, mean ± std over seeds)", "", head, sep]
+    for n in names:
+        runs = res[n]
+        if not runs:
+            lines.append(f"| {n} (n=0) |" + " n/a |" * (len(cols) + 3)); continue
+        row = [f"{n} (n={len(runs)})"]
+        row += [ms_fmt([r[k] for r in runs.values()]) for _, k in cols]
+        row += [ms_fmt([r["params"] for r in runs.values()], 2, 1.0),
+                ms_fmt([r["ms"] for r in runs.values()], 1, 1.0),
+                "—" if n == names[0] else paired_delta(base, runs)]
+        lines.append("| " + " | ".join(row) + " |")
+    return "\n".join(lines)
+
+
+# ---------------- main ----------------
 if __name__ == "__main__":
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--dataset", default="foci", choices=list(DATASETS))
+    ap.add_argument("--img-size", type=int, default=None)
+    ap.add_argument("--aug", default="A", choices=["A", "B", "C", "D"])
+    ap.add_argument("--seeds", type=int, nargs="+", default=[42, 43, 44])
+    ap.add_argument("--configs", nargs="+", default=["none", "1,3,5"],
+                    help='"none" = baseline (first one is the reference), e.g. none 1,3,5 1')
+    ap.add_argument("--split", default=None, choices=["val", "test"])
+    ap.add_argument("--ckpt", default="both", choices=["best", "last", "both"])
+    ap.add_argument("--conf", type=float, default=0.001)
+    a = ap.parse_args()
 
-    r, r25 = evaluate()
+    splits = DATASETS[a.dataset].get("splits", ("train", "val", "test"))
+    split = a.split or ("test" if "test" in splits else "val")
+    assert split in splits, f"{a.dataset} has no '{split}' split"
 
-    print(f"mAP@[.5:.95] : {r['map'].item():.4f}")
-    print(f"mAP@0.25     : {r25['map'].item():.4f}")
-    print(f"mAP@0.5      : {r['map_50'].item():.4f}")
-    print(f"mAP@0.75     : {r['map_75'].item():.4f}")
+    cfgs = {("Baseline" if c == "none" else f"SAC d={c}"):
+            (None if c == "none" else tuple(int(x) for x in c.split(","))) for c in a.configs}
+    names = list(cfgs)
+    kinds = ["best", "last"] if a.ckpt == "both" else [a.ckpt]
 
-    print(
-        f"mAP small    : {r['map_small'].item():.4f} "
-        f"(-1 = is size ka koi GT nahi)"
-    )
+    out_md, out_rows = [], []
+    for kind in kinds:
+        res = {n: {} for n in names}
+        for n, rates in cfgs.items():
+            for s in a.seeds:
+                print(f"{kind} | {n} | seed {s}")
+                r = evaluate_run(a.dataset, a.aug, s, rates, split, kind, a.conf, a.img_size)
+                if r:
+                    res[n][s] = r
+                    out_rows.append(dict(config=n, seed=s, ckpt=kind, split=split, **r))
+        out_md.append(build_tables(res, names, split, kind))
 
-    print(f"mAP medium   : {r['map_medium'].item():.4f}")
-    print(f"mAP large    : {r['map_large'].item():.4f}")
-    print(f"mAR@100      : {r['mar_100'].item():.4f}")
+    report = "\n\n".join(out_md)
+    print("\n" + report)
 
-    print(
-        f"mAP@0.25 small/medium/large : "
-        f"{r25['map_small'].item():.4f} / "
-        f"{r25['map_medium'].item():.4f} / "
-        f"{r25['map_large'].item():.4f}"
-    )
-
-    if r["map_per_class"].numel() > 1:
-        print("per-class mAP@[.5:.95]:")
-
-        for c, ap in zip(
-            r["classes"].tolist(),
-            r["map_per_class"].tolist()
-        ):
-            print(f"  {CLASS_NAMES[c]:10s} {ap:.4f}")
-
-    print(
-        f"\nTABLE | {TAG} | {args.split} {args.ckpt} "
-        f"| mAP@0.25 {r25['map'].item():.4f} "
-        f"| mAP@0.5 {r['map_50'].item():.4f} "
-        f"| mAP {r['map'].item():.4f} "
-        f"| mAP@0.75 {r['map_75'].item():.4f} "
-        f"| mAR@100 {r['mar_100'].item():.4f}"
-    )
+    stem = f"results_{a.dataset}_aug{a.aug}_{split}"
+    Path(f"{stem}.md").write_text(report)
+    with open(f"{stem}.csv", "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=list(out_rows[0])) if out_rows else None
+        if w:
+            w.writeheader(); w.writerows(out_rows)
+    print(f"\nsaved {stem}.md and {stem}.csv (per-seed rows)")
