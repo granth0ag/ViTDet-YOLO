@@ -10,19 +10,14 @@ from src.dataset import build_folder_loaders, DATASETS,AUG_PRESETS
 from src.model.build import build_model, run_tag
 from src.losses.detection_loss import DetectionLoss
 from src.utils.tb_utils import evaluate_map, detection_images
-
+from src.model.vit_sac import SAC
 
 
 # ---------------- args ----------------
 ap = argparse.ArgumentParser()
 ap.add_argument("--aug", default="D", choices=list(AUG_PRESETS), help="augmentation preset")
-
-ap.add_argument("--patch-embed", default="linear", choices=["linear", "conv"])
-ap.add_argument("--pe-ckpt", default=None, help="pretrained patch-embed weights (conv only)")
-ap.add_argument("--lr-pe", type=float, default=1e-3, help="LR for the conv patch embed")
+ap.add_argument("--sac-rates", default="", help="comma-separated rates for SAC")
 ap.add_argument("--seed", type=int, default=42)
-ap.add_argument("--backbone", default="vit", choices=["vit", "conv"], help="ViT backbone type")
-
 ap.add_argument("--epochs", type=int, default=60)
 ap.add_argument("--close-mosaic", type=int, default=10, help="aakhri itne epochs mein mosaic + mixup band")
 ap.add_argument("--eval-every", type=int, default=5)
@@ -32,6 +27,7 @@ args = ap.parse_args()
 
 # ---------------- config ----------------
 
+rates = tuple(int(r) for r in args.sac_rates.split(",")) if args.sac_rates else None
 BATCH_SIZE = 4
 EPOCHS = args.epochs
 CLOSE_MOSAIC = args.close_mosaic
@@ -47,7 +43,7 @@ DS = DATASETS[args.dataset]
 IMG_SIZE = args.img_size or DS["img_size"]
 CLASS_NAMES, DATA_ROOT = DS["classes"], DS["root"]
 NUM_CLASSES = len(CLASS_NAMES)
-TAG = run_tag(args.dataset, IMG_SIZE, USE_P2, args.patch_embed, args.pe_ckpt, args.aug, SEED)
+TAG = run_tag(args.dataset, IMG_SIZE, USE_P2, args.aug, SEED, sac=rates)
 RUN = args.aug
 AUG = AUG_PRESETS[RUN]
 LOG_DIR = f"runs/{TAG}"
@@ -61,29 +57,38 @@ SPLITS = DS.get("splits", ("train", "val", "test"))
 train_loader, val_loader = build_folder_loaders(
     DATA_ROOT, splits=SPLITS, batch_size=BATCH_SIZE,
     img_size=IMG_SIZE, augment=True, num_workers=NUM_WORKERS, aug=AUG)
-print(f"run: {TAG} | backbone={args.backbone} | aug {RUN}: {AUG}")
+print(f"run: {TAG} | sac={rates} | aug {RUN}: {AUG}")
 print(f"epochs={EPOCHS} close_mosaic={CLOSE_MOSAIC} eval_every={EVAL_EVERY}")
 print(f"train: {len(train_loader.dataset)} | val: {len(val_loader.dataset)} images")
 
 # ---------------- model ----------------
 model = build_model(IMG_SIZE, NUM_CLASSES, use_p2=USE_P2, drop_path_rate=DROP_PATH,
-                    patch_embed=args.patch_embed, pe_ckpt=args.pe_ckpt).to(device)
+                     sac_rates=rates).to(device)
 criterion = DetectionLoss(model)                 # model .to(device) ke BAAD
 
 
 
 
-pe_params = list(model.backbone.vit.patch_embed.parameters())
-pe_ids = {id(p) for p in pe_params}
-rest = [p for p in model.backbone.parameters() if id(p) not in pe_ids]
-LR_PE = args.lr_pe if args.patch_embed == "conv" else LR_BACKBONE
+sac_mods = [m for m in model.backbone.modules() if isinstance(m, SAC)]
+sac_ids = {id(p) for m in sac_mods for p in m.parameters()}
+bb_rest = [p for p in model.backbone.parameters() if id(p) not in sac_ids]
 
-optimizer = torch.optim.AdamW([
-    {"params": rest,                    "lr": LR_BACKBONE},   # groups 0,1,2 keep their meaning
-    {"params": model.neck.parameters(), "lr": LR_HEAD},       # for your TensorBoard logging
+groups = [
+    {"params": bb_rest, "lr": LR_BACKBONE},
+    {"params": model.neck.parameters(), "lr": LR_HEAD},
     {"params": model.head.parameters(), "lr": LR_HEAD},
-    {"params": pe_params,               "lr": LR_PE},
-], weight_decay=WEIGHT_DECAY)
+]
+
+if sac_mods:
+    groups += [
+        {"params": [p for m in sac_mods for n, p in m.named_parameters() if n != "gamma"],
+         "lr": LR_HEAD},
+        {"params": [m.gamma for m in sac_mods],
+         "lr": LR_HEAD, "weight_decay": 0.0},
+    ]
+
+optimizer = torch.optim.AdamW(groups, weight_decay=WEIGHT_DECAY)
+
 assert sum(p.numel() for g in optimizer.param_groups for p in g["params"]) == \
        sum(p.numel() for p in model.parameters())           # no parameter left out
 
@@ -135,6 +140,10 @@ for epoch in range(1, EPOCHS + 1):
         print(f"epoch {epoch}: mosaic + mixup off")
 
     tr_loss, it = train_one_epoch()
+    if rates:
+        for i, blk in enumerate(model.backbone.vit.blocks):
+            for r, v in zip(rates, blk.norm1[1].pop_gates()):
+                writer.add_scalar(f"gates/block{i:02d}/d{r}", v.item(), epoch)
 
     # ---- loss + lr curves ----
     writer.add_scalar("loss/total", tr_loss, epoch)
