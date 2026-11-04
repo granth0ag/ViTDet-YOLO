@@ -32,7 +32,7 @@ BATCH_SIZE = 4
 EPOCHS = args.epochs
 CLOSE_MOSAIC = args.close_mosaic
 EVAL_EVERY = args.eval_every
-LR_BACKBONE = 1e-4
+LR_BACKBONE = 3e-4 # was 1e-4 previously 
 LR_HEAD = 1e-3
 WEIGHT_DECAY = 0.05
 DROP_PATH = 0.1
@@ -141,10 +141,21 @@ for epoch in range(1, EPOCHS + 1):
 
     tr_loss, it = train_one_epoch()
     if rates:
+        gam = {"q": [], "k": [], "v": []}
         for i, blk in enumerate(model.backbone.vit.blocks):
-            for r, v in zip(rates, blk.norm1[1].pop_gates()):
-                writer.add_scalar(f"gates/block{i:02d}/d{r}", v.item(), epoch)
-
+            for name in ("q", "k", "v"):
+                m = getattr(blk.qkv_sac, name)
+                for r, g in zip(rates, m.pop_gates()):
+                    writer.add_scalar(f"gates/block{i:02d}/{name}/d{r}", g.item(), epoch)
+                gm = m.gamma.detach().abs().mean().item()          # mean |gamma| over channels
+                writer.add_scalar(f"gamma/block{i:02d}/{name}", gm, epoch)
+                gam[name].append(gm)
+        for name in "qkv":
+            writer.add_scalar(f"gamma_mean/{name}", sum(gam[name]) / len(gam[name]), epoch)
+        writer.add_histogram("gamma/all_channels",
+                             torch.cat([m.gamma.detach().cpu() for m in sac_mods]), epoch)
+        print("          |gamma| mean  " + " | ".join(
+            f"{n}: {sum(v)/len(v):.4f} (blocks {v[0]:.3f}→{v[-1]:.3f})" for n, v in gam.items()))
     # ---- loss + lr curves ----
     writer.add_scalar("loss/total", tr_loss, epoch)
     writer.add_scalar("loss/box", it[0], epoch)
