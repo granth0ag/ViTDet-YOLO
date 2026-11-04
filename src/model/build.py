@@ -1,6 +1,6 @@
 from pathlib import Path
 from src.model.vit import ViTDetBackbone
-from src.model.vit_withConvEmbedding import ViTDetConvStemBackbone
+
 from src.model.fpn import SimpleFeaturePyramid
 from src.model.detector import YoloHead, DetectionModel
 from src.model.vit_sac import ViTDetSACBackbone    
