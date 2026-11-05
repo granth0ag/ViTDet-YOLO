@@ -140,7 +140,7 @@ for epoch in range(1, EPOCHS + 1):
         print(f"epoch {epoch}: mosaic + mixup off")
 
     tr_loss, it = train_one_epoch()
-    if rates:
+    if rates and sac_mods:
         gam = {"q": [], "k": [], "v": []}
         for i, blk in enumerate(model.backbone.vit.blocks):
             for name in ("q", "k", "v"):
