@@ -6,7 +6,7 @@ import argparse, torch, torch.nn as nn, torch.nn.functional as F, timm
 from pathlib import Path
 from torch.utils.data import DataLoader
 from src.dataset import DATASETS, YoloDataset, collate_fn, IMG_EXT
-from src.model.vit_withConvEmbedding import ConvPatchEmbed
+from model.__other_mods.vit_withConvEmbedding import ConvPatchEmbed
 import numpy as np
 import random
 
