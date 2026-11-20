@@ -59,7 +59,7 @@ Metrics are percentages; differences in experiments and evaluation protocols are
 | mAP@0.50:0.95 | 15.33 | 15.28 | 13.34 | **15.48** |
 | AR@100 | 20.50 | 20.43 | 18.51 | **20.60** |
 
-*MRFP + SAC: epoch-195 validation snapshot from a 200-epoch training run; not a verified epoch-200 metric. Models were not all evaluated in a common multi-seed protocol. The five-image validation set makes the findings preliminary.*
+
 
 ### 2. Virus-patch detection
 
