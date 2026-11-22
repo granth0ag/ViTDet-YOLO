@@ -30,7 +30,9 @@ DATASETS = {
                          "chair", "cow", "diningtable", "dog", "horse", "motorbike", "person",
                          "pottedplant", "sheep", "sofa", "train", "tvmonitor"]),
     "foci": dict(root=BASE / "foci", img_size=640,
-                 classes=["virus"], splits=("train", "val")),                         
+                 classes=["virus"], splits=("train", "val")),
+    "foci_cell": dict(root=BASE / "foci_cell", img_size=640,
+                      classes=["cell_patch"], splits=("train", "val")),                         
 }
 
 # ---------------- augmentation presets ----------------
