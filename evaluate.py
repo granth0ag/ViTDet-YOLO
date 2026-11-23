@@ -170,7 +170,7 @@ if __name__ == "__main__":
             cfgs[label.upper()] = (rates, nwd, center, replace(options, sahi=sahi, soft_nms=soft_nms))
     else:
         cfgs = {
-            ("Baseline" if c == "none" else f"MRFP + SAC d={c}"):
+            ("Baseline" if c == "none" else f"SAC d={c}"):
             (None if c == "none" else tuple(int(x) for x in c.split(",")),
              a.nwd_loss, a.aux_center_loss, options)
             for c in a.configs
