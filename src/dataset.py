@@ -20,19 +20,35 @@ PHOTO_OPS = [_enh(ImageEnhance.Brightness), _enh(ImageEnhance.Contrast),
              lambda im, m: ImageOps.autocontrast(im), lambda im, m: ImageOps.equalize(im)]
 
 # ---------------- DataSet config ----------------
-BASE = Path("/kaggle/temp") if Path("/kaggle").exists() else Path("data")
+REPO_DATA = Path(__file__).resolve().parents[1] / "data"
+KAGGLE_DATA = Path("/kaggle/temp")
+
+
+def dataset_root(name):
+    local = REPO_DATA / name
+    if not KAGGLE_DATA.parent.is_dir():
+        return local
+
+    kaggle = KAGGLE_DATA / name
+    for root in (kaggle, local):
+        if all((root / "images" / split).is_dir() for split in ("train", "val")):
+            return root
+
+    # Keep partial datasets usable for evaluation on an existing split.
+    return kaggle if (kaggle / "images").is_dir() else local
+
 
 DATASETS = {
-    "wildlife": dict(root=BASE / "wildlife", img_size=640,
+    "wildlife": dict(root=dataset_root("wildlife"), img_size=640,
                      classes=["buffalo", "elephant", "rhino", "zebra"]),
-    "voc": dict(root=BASE / "voc", img_size=480,
+    "voc": dict(root=dataset_root("voc"), img_size=480,
                 classes=["aeroplane", "bicycle", "bird", "boat", "bottle", "bus", "car", "cat",
                          "chair", "cow", "diningtable", "dog", "horse", "motorbike", "person",
                          "pottedplant", "sheep", "sofa", "train", "tvmonitor"]),
-    "foci": dict(root=BASE / "foci", img_size=640,
+    "foci": dict(root=dataset_root("foci"), img_size=640,
                  classes=["virus"], splits=("train", "val")),
-    "foci_cell": dict(root=BASE / "foci_cell", img_size=640,
-                      classes=["cell_patch"], splits=("train", "val")),                         
+    "foci_cell": dict(root=dataset_root("foci_cell"), img_size=640,
+                      classes=["cell_patch"], splits=("train", "val")),
 }
 
 # ---------------- augmentation presets ----------------
@@ -203,8 +219,15 @@ def build_folder_loaders(root , splits=("train", "val", "test"), batch_size=8,
                          img_size=IMG_SIZE, augment=True, num_workers=4, aug=None):
     root, loaders, aug = Path(root), [], (aug or {})
     for s in splits:
-        paths = sorted(p for p in (root / "images" / s).iterdir() if p.suffix.lower() in IMG_EXT)
-        assert paths, f"{root}/images/{s} khaali hai, prepare_wildlife.py chalaya?"
+        image_dir = root / "images" / s
+        if not image_dir.is_dir():
+            raise FileNotFoundError(
+                f"Missing dataset split: {image_dir}. "
+                f"Prepare or attach the '{root.name}' dataset with images/{s} and labels/{s}."
+            )
+        paths = sorted(p for p in image_dir.iterdir() if p.is_file() and p.suffix.lower() in IMG_EXT)
+        if not paths:
+            raise ValueError(f"No supported images (.jpg, .jpeg, .png) in {image_dir}")
         ds = YoloDataset(paths, img_size, augment=(augment and s == "train"), **aug)
         loaders.append(DataLoader(ds, batch_size=batch_size, shuffle=(s == "train"),
                                   num_workers=num_workers, collate_fn=collate_fn))
