@@ -7,6 +7,7 @@ import torch
 from torch.utils.tensorboard import SummaryWriter
 
 from src.dataset import build_folder_loaders, DATASETS,AUG_PRESETS
+from src.model.options import add_training_options, option_suffix
 from src.model.build import build_model, run_tag
 from src.losses.detection_loss import DetectionLoss
 from src.utils.tb_utils import evaluate_map, detection_images
@@ -23,6 +24,7 @@ ap.add_argument("--close-mosaic", type=int, default=10, help="aakhri itne epochs
 ap.add_argument("--eval-every", type=int, default=5)
 ap.add_argument("--dataset", default="wildlife", choices=list(DATASETS))
 ap.add_argument("--img-size", type=int, default=None, help="override the dataset's default")
+add_training_options(ap)
 args = ap.parse_args()
 
 # ---------------- config ----------------
@@ -46,6 +48,7 @@ NUM_CLASSES = len(CLASS_NAMES)
 TAG = run_tag(args.dataset, IMG_SIZE, USE_P2, args.aug, SEED, sac=rates)
 RUN = args.aug
 AUG = AUG_PRESETS[RUN]
+TAG += option_suffix(args)
 LOG_DIR = f"runs/{TAG}"
 BEST_CKPT, LAST_CKPT = f"best_{TAG}.pt", f"last_{TAG}.pt"
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -63,8 +66,8 @@ print(f"train: {len(train_loader.dataset)} | val: {len(val_loader.dataset)} imag
 
 # ---------------- model ----------------
 model = build_model(IMG_SIZE, NUM_CLASSES, use_p2=USE_P2, drop_path_rate=DROP_PATH,
-                     sac_rates=rates).to(device)
-criterion = DetectionLoss(model)                 # model .to(device) ke BAAD
+                     sac_rates=rates, aux_center=args.aux_center_weight > 0).to(device)
+criterion = DetectionLoss(model, args.nwd_weight, args.nwd_scale, args.aux_center_weight)                 # model .to(device) ke BAAD
 
 
 

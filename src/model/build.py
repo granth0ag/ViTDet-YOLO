@@ -12,7 +12,7 @@ def run_tag(dataset, img_size, use_p2, aug, seed, sac=None):
 
 
 def build_model(img_size=640, num_classes=1, use_p2=False, out_ch=128,
-                window_size=10, drop_path_rate=0.0, sac_rates=None):
+                window_size=10, drop_path_rate=0.0, sac_rates=None, aux_center=False):
     kw = dict(img_size=img_size, window_size=window_size, drop_path_rate=drop_path_rate)
 
     # if sac_rates is not None:
@@ -30,4 +30,4 @@ def build_model(img_size=640, num_classes=1, use_p2=False, out_ch=128,
     if sac_rates is not None:
         neck = MRFPNeck(neck, ch=out_ch)
     head = YoloHead(num_classes=num_classes, ch=(out_ch,) * len(neck.strides), strides=neck.strides)
-    return DetectionModel(bb, neck, head)
+    return DetectionModel(bb, neck, head, center_channels=out_ch if aux_center else None)
