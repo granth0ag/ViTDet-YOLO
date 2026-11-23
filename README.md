@@ -131,6 +131,50 @@ python inference.py --dataset foci --aug A --seed 42 --ckpt best path/to/image.p
 
 These commands need locally trained checkpoints. The historical tables above include separately documented experiments and cannot be regenerated without their exact original checkpoints/configurations. No pretrained detector weights are included.
 
+### 5. Run the cell detection ablation
+
+Use non-viral cell images under `data/foci_cell`, with the class `cell_patch` and ID `0`.
+The new experiment flags also work with `voc` and `wildlife`.
+
+| Run | Addition to MRFP + QKV-SAC | Weights |
+|---|---|---|
+| E0 | Reference, with standard hard NMS | Existing `_sac135` |
+| E1 | `--nwd-loss` adds a positive-anchor box loss of `0.5 × (1 − exp(−W₂ / 12.8))` to CIoU before the box gain | Train `_sac135_nwd` |
+| E2 | `--aux-center-loss` adds a shared 1×1 center-offset head and a Smooth L1 loss with gain 0.25 | Train `_sac135_center` |
+| E3 | `--sahi` resizes overlapping crops to model input size and merges them with full-image predictions using hard NMS | Reuse E0 |
+| E4 | `--soft-nms` uses class-wise Gaussian score decay with sigma 0.5 | Reuse E0 |
+
+Train E1 and E2 with the same settings as E0. Run the E0 command only if you need
+to train the matching checkpoint. Change the seed in both training and evaluation
+when running additional replicates.
+
+```bash
+python -m pip install -r requirements.txt
+python train.py --dataset foci_cell --aug A --seed 42 --epochs 200 --sac-rates 1,3,5
+python train.py --dataset foci_cell --aug A --seed 42 --epochs 200 --sac-rates 1,3,5 --nwd-loss
+python train.py --dataset foci_cell --aug A --seed 42 --epochs 200 --sac-rates 1,3,5 --aux-center-loss
+
+python evaluate.py --dataset foci_cell --aug A --seeds 42 --ckpt best --split val --ablations e0 e1 e2 e3 e4
+```
+
+The evaluator writes a Markdown comparison and a CSV with per-seed metrics under
+`results_foci_cell_augA_val_ablation_e0-e1-e2-e3-e4.*`. All rows use the same
+confidence threshold and detection cap (300 before COCO metric limits). Small-object
+AP uses the full-image letterboxed coordinate system for every row. Reported
+latency includes suppression and the additional SAHI image loading and crop passes.
+
+To evaluate all four features together, train with both loss flags and append
+`all` to the `--ablations` list. To use SAHI and Soft-NMS together with the E0
+checkpoint, run evaluation with `--configs 1,3,5 --sahi --soft-nms` in place of
+`--ablations ...`. The same inference flags work in the visualizer:
+
+```bash
+python inference.py --dataset foci_cell --aug A --seed 42 --sac-rates 1,3,5 --sahi --soft-nms path/to/cells.png
+```
+
+SAHI defaults to square crops half the original image's long side with 25% overlap.
+Use `--tile-size`, `--tile-overlap`, and `--soft-nms-sigma` to override the inference settings.
+
 ## Repository layout
 
 ```text

@@ -3,16 +3,15 @@ import argparse
 from pathlib import Path
 
 import torch
-import torchvision.transforms as T
 from PIL import Image, ImageDraw
 
-try:
-    from ultralytics.utils.nms import non_max_suppression
-except ImportError:
-    from ultralytics.utils.ops import non_max_suppression
-
-from src.dataset import DATASETS, MEAN, STD, IMG_EXT
+from src.dataset import DATASETS, IMG_EXT
+from src.experiments import (
+    add_inference_options, add_training_options, inference_options,
+    validate_experiment_dataset,
+)
 from src.model.build import build_model, run_tag
+from src.utils.prediction import detect_image
 
 
 # ---------------- args ----------------
@@ -32,7 +31,15 @@ ap.add_argument("--conf", type=float, default=0.25,
                 help="detections ka confidence threshold")
 ap.add_argument("paths", nargs="*", help="image files ya folders")
 
+add_training_options(ap)
+add_inference_options(ap)
 args = ap.parse_args()
+options = inference_options(ap, args)
+validate_experiment_dataset(
+    ap, args.dataset, args.nwd_loss or args.aux_center_loss or args.sahi or args.soft_nms,
+)
+if not 0 <= args.conf <= 1:
+    ap.error("--conf must be in [0, 1]")
 
 
 # ---------------- config ----------------
@@ -53,20 +60,15 @@ TAG = run_tag(
     USE_P2,
     args.aug,
     args.seed,
-    sac=rates
+    sac=rates, nwd=args.nwd_loss, aux_center=args.aux_center_loss,
 )
 
 CKPT = f"{args.ckpt}_{TAG}.pt"
-OUT_DIR = Path("outputs") / TAG
+post_tag = ("_sahi" if options.sahi else "") + ("_softnms" if options.soft_nms else "")
+OUT_DIR = Path("outputs") / (TAG + post_tag)
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
-
-to_tensor = T.Compose([
-    T.ToTensor(),
-    T.Normalize(mean=MEAN, std=STD)
-])
-
 
 # ---------------- model ----------------
 def load_model():
@@ -74,7 +76,7 @@ def load_model():
         IMG_SIZE,
         NUM_CLASSES,
         use_p2=USE_P2,
-        sac_rates=rates
+        sac_rates=rates, aux_center=args.aux_center_loss, pretrained=False,
     ).to(device)
 
     model.load_state_dict(torch.load(CKPT, map_location=device))
@@ -82,56 +84,6 @@ def load_model():
 
     print(f"loaded {CKPT}")
     return model
-
-
-def letterbox(image, S=IMG_SIZE):
-    """Same non-augment letterbox as dataset.py."""
-    w0, h0 = image.size
-
-    scale = S / max(w0, h0)
-    new_w = round(w0 * scale)
-    new_h = round(h0 * scale)
-
-    pad_x = (S - new_w) // 2
-    pad_y = (S - new_h) // 2
-
-    canvas = Image.new("RGB", (S, S), (114, 114, 114))
-    canvas.paste(
-        image.resize((new_w, new_h), Image.BILINEAR),
-        (pad_x, pad_y)
-    )
-
-    return canvas, scale, pad_x, pad_y
-
-
-@torch.no_grad()
-def detect(model, image, conf=0.25):
-    """PIL image -> [n, 6] in ORIGINAL image pixels."""
-    w0, h0 = image.size
-
-    canvas, scale, pad_x, pad_y = letterbox(image)
-
-    x = to_tensor(canvas).unsqueeze(0).to(device)
-
-    with torch.amp.autocast("cuda", enabled=(device == "cuda")):
-        y, _ = model(x)
-
-    det = non_max_suppression(
-        y,
-        conf_thres=conf,
-        iou_thres=IOU_THRES
-    )[0].cpu()
-
-    if len(det):
-        det[:, [0, 2]] = (
-            (det[:, [0, 2]] - pad_x) / scale
-        ).clamp(0, w0)
-
-        det[:, [1, 3]] = (
-            (det[:, [1, 3]] - pad_y) / scale
-        ).clamp(0, h0)
-
-    return det
 
 
 def draw(image, det):
@@ -193,13 +145,11 @@ if __name__ == "__main__":
     model = load_model()
 
     for p in paths:
-        image = Image.open(p).convert("RGB")
+        with Image.open(p) as source:
+            image = source.convert("RGB")
 
-        det = detect(
-            model,
-            image,
-            conf=args.conf
-        )
+        with torch.inference_mode(), torch.amp.autocast("cuda", enabled=(device == "cuda")):
+            det = detect_image(model, image, IMG_SIZE, device, args.conf, IOU_THRES, options).cpu()
 
         draw(image, det).save(OUT_DIR / p.name)
 

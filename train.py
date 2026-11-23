@@ -11,6 +11,7 @@ from src.model.build import build_model, run_tag
 from src.losses.detection_loss import DetectionLoss
 from src.utils.tb_utils import evaluate_map, detection_images
 from src.model.vit_sac import SAC
+from src.experiments import add_training_options, validate_experiment_dataset
 
 
 # ---------------- args ----------------
@@ -23,7 +24,9 @@ ap.add_argument("--close-mosaic", type=int, default=10, help="aakhri itne epochs
 ap.add_argument("--eval-every", type=int, default=5)
 ap.add_argument("--dataset", default="wildlife", choices=list(DATASETS))
 ap.add_argument("--img-size", type=int, default=None, help="override the dataset's default")
+add_training_options(ap)
 args = ap.parse_args()
+validate_experiment_dataset(ap, args.dataset, args.nwd_loss or args.aux_center_loss)
 
 # ---------------- config ----------------
 
@@ -43,7 +46,7 @@ DS = DATASETS[args.dataset]
 IMG_SIZE = args.img_size or DS["img_size"]
 CLASS_NAMES, DATA_ROOT = DS["classes"], DS["root"]
 NUM_CLASSES = len(CLASS_NAMES)
-TAG = run_tag(args.dataset, IMG_SIZE, USE_P2, args.aug, SEED, sac=rates)
+TAG = run_tag(args.dataset, IMG_SIZE, USE_P2, args.aug, SEED, sac=rates, nwd=args.nwd_loss, aux_center=args.aux_center_loss)
 RUN = args.aug
 AUG = AUG_PRESETS[RUN]
 LOG_DIR = f"runs/{TAG}"
@@ -63,8 +66,8 @@ print(f"train: {len(train_loader.dataset)} | val: {len(val_loader.dataset)} imag
 
 # ---------------- model ----------------
 model = build_model(IMG_SIZE, NUM_CLASSES, use_p2=USE_P2, drop_path_rate=DROP_PATH,
-                     sac_rates=rates).to(device)
-criterion = DetectionLoss(model)                 # model .to(device) ke BAAD
+                     sac_rates=rates, aux_center=args.aux_center_loss).to(device)
+criterion = DetectionLoss(model, nwd=args.nwd_loss, aux_center=args.aux_center_loss)
 
 
 
@@ -78,6 +81,9 @@ groups = [
     {"params": model.neck.parameters(), "lr": LR_HEAD},
     {"params": model.head.parameters(), "lr": LR_HEAD},
 ]
+
+if model.center_head is not None:
+    groups.append({"params": model.center_head.parameters(), "lr": LR_HEAD})
 
 if sac_mods:
     groups += [
@@ -102,7 +108,7 @@ writer = SummaryWriter(LOG_DIR, flush_secs=30)
 
 def train_one_epoch():
     model.train()
-    total, items = 0.0, torch.zeros(3)
+    total, items = 0.0, torch.zeros(3 + int(args.aux_center_loss))
 
     for images, targets, _ in train_loader:
         images = images.to(device)
@@ -125,7 +131,7 @@ def train_one_epoch():
             optimizer.step()
 
         total += loss.item()
-        items += loss_items[:3].cpu()
+        items += loss_items
 
     n = len(train_loader)
     return total / n, items / n
@@ -161,6 +167,8 @@ for epoch in range(1, EPOCHS + 1):
     writer.add_scalar("loss/box", it[0], epoch)
     writer.add_scalar("loss/cls", it[1], epoch)
     writer.add_scalar("loss/dfl", it[2], epoch)
+    if args.aux_center_loss:
+        writer.add_scalar("loss/center", it[3], epoch)
     writer.add_scalar("lr/backbone", optimizer.param_groups[0]["lr"], epoch)
     writer.add_scalar("lr/head", optimizer.param_groups[1]["lr"], epoch)
     scheduler.step()
