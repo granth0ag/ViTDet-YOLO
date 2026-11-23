@@ -22,11 +22,19 @@ class YoloHead(nn.Module):
 
 class DetectionModel(nn.Module):
     """Thin wrapper because v8DetectionLoss expects model.model[-1] and model.args."""
-    def __init__(self, backbone, neck, head):
+    def __init__(self, backbone, neck, head, center_channels=None):
         super().__init__()
         self.backbone, self.neck, self.head = backbone, neck, head
+        self.center_head = None
+        if center_channels is not None:
+            self.center_head = nn.Conv2d(center_channels, 1, kernel_size=1)
+            nn.init.constant_(self.center_head.bias, -4.6)
         self.model = nn.ModuleList([head.detect])                       # loss looks here
         self.args = SimpleNamespace(box=7.5, cls=0.5, dfl=1.5)          # loss gains
 
     def forward(self, x):
-        return self.head(self.neck(self.backbone(x)))
+        features = self.neck(self.backbone(x))
+        if self.training and self.center_head is not None:
+            centers = self.center_head(features[0])
+            return self.head(features), centers
+        return self.head(features)

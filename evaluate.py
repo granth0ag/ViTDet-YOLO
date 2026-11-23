@@ -12,6 +12,7 @@ except ImportError:
     from ultralytics.utils.ops import non_max_suppression
 
 from src.dataset import build_folder_loaders, DATASETS
+from src.model.options import add_training_options, option_suffix
 from src.model.build import build_model, run_tag
 
 USE_P2, BATCH_SIZE, IOU_THRES = False, 4, 0.65
@@ -29,18 +30,18 @@ def _sync():
 
 
 @torch.no_grad()
-def evaluate_run(dataset, aug, seed, rates, split, kind, conf, img_size=None):
+def evaluate_run(dataset, aug, seed, rates, split, kind, conf, img_size=None, option_tag="", aux_center=False):
     """One checkpoint -> dict of metrics, or None if the checkpoint doesn't exist."""
     DS = DATASETS[dataset]
     size = img_size or DS["img_size"]
-    path = f"{kind}_{run_tag(dataset, size, USE_P2, aug, seed, sac=rates)}.pt"
+    path = f"{kind}_{run_tag(dataset, size, USE_P2, aug, seed, sac=rates)}{option_tag}.pt"
     if not Path(path).exists():
         print(f"  [skip] missing {path}")
         return None
 
     (loader,) = build_folder_loaders(DS["root"], splits=(split,), batch_size=BATCH_SIZE,
                                      img_size=size, augment=False, num_workers=2)
-    model = build_model(size, len(DS["classes"]), use_p2=USE_P2, sac_rates=rates).to(device)
+    model = build_model(size, len(DS["classes"]), use_p2=USE_P2, sac_rates=rates, aux_center=aux_center).to(device)
     model.load_state_dict(torch.load(path, map_location=device))
     model.eval()
     params_m = sum(p.numel() for p in model.parameters()) / 1e6
@@ -124,7 +125,9 @@ if __name__ == "__main__":
     ap.add_argument("--split", default=None, choices=["val", "test"])
     ap.add_argument("--ckpt", default="both", choices=["best", "last", "both"])
     ap.add_argument("--conf", type=float, default=0.001)
+    add_training_options(ap)
     a = ap.parse_args()
+    option_tag = option_suffix(a)
 
     splits = DATASETS[a.dataset].get("splits", ("train", "val", "test"))
     split = a.split or ("test" if "test" in splits else "val")
@@ -141,7 +144,8 @@ if __name__ == "__main__":
         for n, rates in cfgs.items():
             for s in a.seeds:
                 print(f"{kind} | {n} | seed {s}")
-                r = evaluate_run(a.dataset, a.aug, s, rates, split, kind, a.conf, a.img_size)
+                r = evaluate_run(a.dataset, a.aug, s, rates, split, kind, a.conf, a.img_size,
+                                 option_tag=option_tag, aux_center=a.aux_center_weight > 0)
                 if r:
                     res[n][s] = r
                     out_rows.append(dict(config=n, seed=s, ckpt=kind, split=split, **r))

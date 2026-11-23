@@ -12,6 +12,7 @@ except ImportError:
     from ultralytics.utils.ops import non_max_suppression
 
 from src.dataset import DATASETS, MEAN, STD, IMG_EXT
+from src.model.options import add_training_options, option_suffix
 from src.model.build import build_model, run_tag
 
 
@@ -32,6 +33,11 @@ ap.add_argument("--conf", type=float, default=0.25,
                 help="detections ka confidence threshold")
 ap.add_argument("paths", nargs="*", help="image files ya folders")
 
+ap.add_argument("--sahi", action="store_true", help="enable sliced inference")
+ap.add_argument("--tile-size", type=int, default=640, help="square tile side in original pixels")
+ap.add_argument("--tile-overlap", type=float, default=0.2, help="fractional overlap on both axes")
+ap.add_argument("--merge-iou", type=float, default=0.5, help="class-aware cross-tile NMS threshold")
+add_training_options(ap)
 args = ap.parse_args()
 
 
@@ -56,8 +62,11 @@ TAG = run_tag(
     sac=rates
 )
 
+TAG += option_suffix(args)
 CKPT = f"{args.ckpt}_{TAG}.pt"
 OUT_DIR = Path("outputs") / TAG
+if args.sahi:
+    OUT_DIR /= f"sahi_{args.tile_size}_{args.tile_overlap}_{args.merge_iou}"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -74,6 +83,7 @@ def load_model():
         IMG_SIZE,
         NUM_CLASSES,
         use_p2=USE_P2,
+        aux_center=args.aux_center_weight > 0,
         sac_rates=rates
     ).to(device)
 
@@ -105,7 +115,7 @@ def letterbox(image, S=IMG_SIZE):
 
 
 @torch.no_grad()
-def detect(model, image, conf=0.25):
+def _detect_tile(model, image, conf):
     """PIL image -> [n, 6] in ORIGINAL image pixels."""
     w0, h0 = image.size
 
@@ -132,6 +142,13 @@ def detect(model, image, conf=0.25):
         ).clamp(0, h0)
 
     return det
+
+
+def detect(model, image, conf=0.25, *, sahi=False, tile_size=640, tile_overlap=0.2, merge_iou=0.5):
+    if sahi:
+        from src.model.sliced_inference import sliced_detect
+        return sliced_detect(model, image, _detect_tile, conf, tile_size, tile_overlap, merge_iou)
+    return _detect_tile(model, image, conf)
 
 
 def draw(image, det):
@@ -198,6 +215,8 @@ if __name__ == "__main__":
         det = detect(
             model,
             image,
+            sahi=args.sahi, tile_size=args.tile_size,
+            tile_overlap=args.tile_overlap, merge_iou=args.merge_iou,
             conf=args.conf
         )
 
