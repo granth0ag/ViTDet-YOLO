@@ -18,16 +18,16 @@ Both inputs were prepared for 640×640 detection. Dataset source and annotation 
 | Metric | Baseline | QKV-SAC backbone | SAC in head | MRFP + SAC (epoch 195) |
 |---|---:|---:|---:|---:|
 | mAP@0.25 | 53.61 | 53.66 | 52.25 | **54.89** |
-| mAP@0.50 | **45.57** | 43.74 | 42.28 | **46.42** |
+| mAP@0.50 | 45.57 | 43.74 | 42.28 | **46.42** |
 | mAP@0.75 | 3.94 | **4.34** | 3.21 | 3.85 |
 | mAP@0.50:0.95 | 15.33 | 15.28 | 13.34 | **15.48** |
 | AR@100 | 20.50 | 20.43 | 18.51 | **20.60** |
 
-The two values in bold in the mAP@0.50 row are highlighted across different comparisons; they **are not equally controlled** because the combined run was observed at a different epoch. The epoch-195 green log was identified by the experiment owner as **MRFP + SAC**. Its full run configuration and checkpoint have not been independently verified.
+Table 8 of the final report includes the combined run at epoch 195. The five-image validation split and the difference in evaluation epoch limit the comparison with the epoch-200 baseline.
 
 ## Virus-patch detection
 
-**200 epochs; three seeds (42, 43, 44).** The enhanced run was initially labeled `SAC d=1,3,5` by the evaluation CSV, but its model builder couples QKV-SAC and MRFP-inspired neck refinement; it is therefore labeled **MRFP + SAC** here. The three-seed values below come from the supplied experiment table (not the older one-run report).
+**200 epochs; three seeds (42, 43, 44).** The enhanced run was initially labeled `SAC d=1,3,5` by the evaluation CSV, but its model builder couples QKV-SAC and MRFP-inspired neck refinement; it is therefore labeled **MRFP + SAC** here. Tables 6 and 7 of the November 2026 final report give the means and paired runs. Table 1 records the earlier 100-epoch single-run baseline.
 
 | Metric | Baseline (mean) | MRFP + SAC (mean) | Difference, pp |
 |---|---:|---:|---:|
@@ -40,7 +40,7 @@ The two values in bold in the mAP@0.50 row are highlighted across different comp
 
 ### Exact per-seed values available from the provided evaluation table
 
-The following values have been transcribed directly from the supplied CSV screenshot; `mAP` denotes mAP@0.50:0.95. The displayed means above are rounded from these rows.
+The following values appear in Table 7 of the final report; `mAP` denotes mAP@0.50:0.95. The displayed means above are rounded from these rows.
 
 | Model | Seed | mAP@0.25 | mAP@0.50 | mAP@0.75 | mAP | mAP small | AR@100 |
 |---|---:|---:|---:|---:|---:|---:|---:|
