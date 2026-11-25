@@ -15,26 +15,28 @@ The combined detector in the report adds two operations. Before the ViT's query,
 The report describes 149 images, with 134 for training and 15 for validation. The following scores are validation percentages averaged over seeds 42, 43 and 44 after 200-epoch runs.
 
 | Metric | Plain ViT | Backbone SAC + dense MRFP neck | Change (percentage points) |
-|---|---:|---:|---:|
-| AP@0.50 | 78.84 | 80.47 | +1.63 |
-| AP@0.75 | 16.17 | 17.95 | +1.78 |
-| AP@0.50:0.95 | 31.84 | 32.67 | +0.83 |
-| AP for small objects | 30.80 | 29.97 | −0.83 |
+| --- | ---: | ---: | ---: |
+| mAP@0.25 | 87.12 | 87.87 | +0.75 |
+| mAP@0.50 | 78.84 | 80.47 | +1.63 |
+| mAP@0.75 | 16.17 | 17.95 | +1.78 |
+| mAP@0.50:0.95 | 31.84 | 32.67 | +0.83 |
+| mAP small | 30.80 | 29.97 | −0.83 |
+| AR@100 | 44.67 | 44.90 | +0.23 |
 
 AP@0.50 improved in all three seed pairs. The higher overall AP came with lower mean AP on small objects. [Per-seed scores and full metrics](docs/EXPERIMENTS.md#virus-patch-detection)
 
 ## Cell-patch detection
 
-The cell dataset contains 45 training images and five validation images. All annotated validation objects fall in the small-object category. The table reports validation percentages from the final report (Table 8).
+The cell-patch experiments used a **200-epoch training schedule**, with 45 training images and five validation images. All annotated validation objects fall in the small-object category. Table 8 reports the following validation scores (%).
 
-| Model | Epoch evaluated | AP@0.50 | AP@0.75 | AP@0.50:0.95 |
-|---|---:|---:|---:|---:|
-| Plain ViT | 200 | 45.57 | 3.94 | 15.33 |
-| SAC in the ViT backbone | 200 | 43.74 | 4.34 | 15.28 |
-| SAC in the YOLOv8 head | 200 | 42.28 | 3.21 | 13.34 |
-| Backbone SAC + dense MRFP neck | 195 | 46.42 | 3.85 | 15.48 |
+| Model | mAP@0.25 | mAP@0.50 | mAP@0.75 | mAP@0.50:0.95 | AR@100 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Plain ViT | 53.61 | 45.57 | 3.94 | 15.33 | 20.50 |
+| SAC in the ViT backbone | 53.66 | 43.74 | 4.34 | 15.28 | 20.43 |
+| SAC in the YOLOv8 head | 52.25 | 42.28 | 3.21 | 13.34 | 18.51 |
+| Backbone SAC + dense MRFP neck | 54.89 | 46.42 | 3.85 | 15.48 | 20.60 |
 
-Among the matched epoch-200 runs, backbone SAC gave the highest AP@0.75, while the baseline gave the highest AP@0.50:0.95. The combined model reached 46.42% AP@0.50 at epoch 195. The different evaluation epoch and five-image split limit how precisely that gain can be estimated. [Cell experiment protocols](docs/EXPERIMENTS.md#cell-patch-detection)
+The first three rows use final-epoch evaluations. The combined row uses the latest pre-final validation snapshot reported in Table 8. It reached 46.42% mAP@0.50 and 15.48% mAP@0.50:0.95. Backbone SAC had the highest mAP@0.75 (4.34%). [Checkpoint details](docs/EXPERIMENTS.md#cell-patch-detection)
 
 ## Run a microscopy experiment
 
