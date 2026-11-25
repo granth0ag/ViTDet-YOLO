@@ -1,8 +1,13 @@
+# Runtime requirements for the current training / evaluation scripts.
+# Install a compatible PyTorch/torchvision build for your CUDA or CPU setup first.
+torch
+torchvision
+numpy
+Pillow
+tensorboard
 timm
 einops
 ultralytics
 torchmetrics
 pycocotools
 pyyaml
-
-# run !pip install -r requirements.txt
