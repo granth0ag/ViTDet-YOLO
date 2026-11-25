@@ -13,6 +13,7 @@ except ImportError:
 
 from src.dataset import DATASETS, MEAN, STD, IMG_EXT
 from src.model.build import build_model, run_tag
+from src.utils.mrfp_config import add_mrfp_args, model_label
 
 
 # ---------------- args ----------------
@@ -31,6 +32,7 @@ ap.add_argument("--ckpt", default="best", choices=["best", "last"])
 ap.add_argument("--conf", type=float, default=0.25,
                 help="detections ka confidence threshold")
 ap.add_argument("paths", nargs="*", help="image files ya folders")
+add_mrfp_args(ap)
 
 args = ap.parse_args()
 
@@ -53,7 +55,8 @@ TAG = run_tag(
     USE_P2,
     args.aug,
     args.seed,
-    sac=rates
+    sac=rates,
+    mrfp_variant=args.mrfp
 )
 
 CKPT = f"{args.ckpt}_{TAG}.pt"
@@ -74,7 +77,8 @@ def load_model():
         IMG_SIZE,
         NUM_CLASSES,
         use_p2=USE_P2,
-        sac_rates=rates
+        sac_rates=rates,
+        mrfp_variant=args.mrfp
     ).to(device)
 
     model.load_state_dict(torch.load(CKPT, map_location=device))
@@ -186,7 +190,7 @@ if __name__ == "__main__":
             if q.suffix.lower() in IMG_EXT
         )[:8]
 
-    print(f"run: {TAG} | sac={rates}")
+    print(f"run: {TAG} | {model_label(rates, args.mrfp)}")
     print(f"dataset={args.dataset} | img_size={IMG_SIZE} | aug={args.aug} | seed={args.seed}")
     print(f"checkpoint: {CKPT}")
 

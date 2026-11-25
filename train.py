@@ -11,18 +11,20 @@ from src.model.build import build_model, run_tag
 from src.losses.detection_loss import DetectionLoss
 from src.utils.tb_utils import evaluate_map, detection_images
 from src.model.vit_sac import SAC
+from src.utils.mrfp_config import add_mrfp_args, model_label
 
 
 # ---------------- args ----------------
 ap = argparse.ArgumentParser()
 ap.add_argument("--aug", default="D", choices=list(AUG_PRESETS), help="augmentation preset")
-ap.add_argument("--sac-rates", default="", help="comma-separated rates for SAC")
+ap.add_argument("--sac-rates", default="", help="optional SAC backbone rates; leave empty for MRFP-only experiments")
 ap.add_argument("--seed", type=int, default=42)
 ap.add_argument("--epochs", type=int, default=60)
 ap.add_argument("--close-mosaic", type=int, default=10, help="aakhri itne epochs mein mosaic + mixup band")
 ap.add_argument("--eval-every", type=int, default=5)
 ap.add_argument("--dataset", default="wildlife", choices=list(DATASETS))
 ap.add_argument("--img-size", type=int, default=None, help="override the dataset's default")
+add_mrfp_args(ap)
 args = ap.parse_args()
 
 # ---------------- config ----------------
@@ -43,7 +45,7 @@ DS = DATASETS[args.dataset]
 IMG_SIZE = args.img_size or DS["img_size"]
 CLASS_NAMES, DATA_ROOT = DS["classes"], DS["root"]
 NUM_CLASSES = len(CLASS_NAMES)
-TAG = run_tag(args.dataset, IMG_SIZE, USE_P2, args.aug, SEED, sac=rates)
+TAG = run_tag(args.dataset, IMG_SIZE, USE_P2, args.aug, SEED, sac=rates, mrfp_variant=args.mrfp)
 RUN = args.aug
 AUG = AUG_PRESETS[RUN]
 LOG_DIR = f"runs/{TAG}"
@@ -54,16 +56,18 @@ scaler = torch.amp.GradScaler("cuda") if device == "cuda" else None
 random.seed(SEED); np.random.seed(SEED); torch.manual_seed(SEED)
 SPLITS = DS.get("splits", ("train", "val", "test"))
 # ---------------- data ----------------
-train_loader, val_loader = build_folder_loaders(
+train_loader, val_loader, *_ = build_folder_loaders(
     DATA_ROOT, splits=SPLITS, batch_size=BATCH_SIZE,
     img_size=IMG_SIZE, augment=True, num_workers=NUM_WORKERS, aug=AUG)
-print(f"run: {TAG} | sac={rates} | aug {RUN}: {AUG}")
+print(f"run: {TAG} | {model_label(rates, args.mrfp)}")
+print(f"dataset={args.dataset} img_size={IMG_SIZE} seed={SEED} | aug {RUN}: {AUG}")
+print(f"logs: {LOG_DIR} | checkpoints: {BEST_CKPT}, {LAST_CKPT}")
 print(f"epochs={EPOCHS} close_mosaic={CLOSE_MOSAIC} eval_every={EVAL_EVERY}")
 print(f"train: {len(train_loader.dataset)} | val: {len(val_loader.dataset)} images")
 
 # ---------------- model ----------------
 model = build_model(IMG_SIZE, NUM_CLASSES, use_p2=USE_P2, drop_path_rate=DROP_PATH,
-                     sac_rates=rates).to(device)
+                     sac_rates=rates, mrfp_variant=args.mrfp).to(device)
 criterion = DetectionLoss(model)                 # model .to(device) ke BAAD
 
 
@@ -95,6 +99,10 @@ assert sum(p.numel() for g in optimizer.param_groups for p in g["params"]) == \
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS)
 
 writer = SummaryWriter(LOG_DIR, flush_secs=30)
+writer.add_text("config/model", model_label(rates, args.mrfp))
+writer.add_text("config/arguments", str(vars(args)))
+print(f"parameters: total={sum(p.numel() for p in model.parameters()):,} | "
+      f"neck={sum(p.numel() for p in model.neck.parameters()):,}")
 
 
 
@@ -154,8 +162,11 @@ for epoch in range(1, EPOCHS + 1):
             writer.add_scalar(f"gamma_mean/{name}", sum(gam[name]) / len(gam[name]), epoch)
         writer.add_histogram("gamma/all_channels",
                              torch.cat([m.gamma.detach().cpu() for m in sac_mods]), epoch)
-        print("          |gamma| mean  " + " | ".join(
+        print("          SAC gamma (unused by current SAC forward)  " + " | ".join(
             f"{n}: {sum(v)/len(v):.4f} (blocks {v[0]:.3f}→{v[-1]:.3f})" for n, v in gam.items()))
+    mrfp = getattr(model.neck, "mrfp", None)
+    if mrfp is not None and hasattr(mrfp, "gamma"):
+        writer.add_scalar("mrfp/gamma", mrfp.gamma.detach().item(), epoch)
     # ---- loss + lr curves ----
     writer.add_scalar("loss/total", tr_loss, epoch)
     writer.add_scalar("loss/box", it[0], epoch)
@@ -174,7 +185,7 @@ for epoch in range(1, EPOCHS + 1):
             writer.add_scalar(f"metrics/{k}", r[k].item(), epoch)
         writer.add_images("detections (green=GT, red=pred)",
                           detection_images(model, val_loader, device, n=4, img_size=IMG_SIZE), epoch)
-        print(f"          val mAP@0.5 {r['map_50'].item():.4f} | mAP {r['map'].item():.4f}")
+        print(f"          val mAP@0.5 {r['map_50'].item():.4f} | mAP@0.5:0.95 {r['map'].item():.4f}")
 
         if r["map"].item() > best_map:
             best_map = r["map"].item()
