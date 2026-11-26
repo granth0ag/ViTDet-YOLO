@@ -211,6 +211,56 @@ class MRFPTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             CoMerMRFP(32, 3)([torch.zeros(1, 32, 8, 8)])
 
+    def test_dense_variants_use_normal_convolution_in_every_spatial_branch(self):
+        for variant in ("plain-conv", "plain-conv-sac", "single-conv"):
+            with self.subTest(variant=variant):
+                block = CoMerMRFP(32, 3, variant=variant)
+                for level in block.levels:
+                    spatial = [m for m in level.modules()
+                               if isinstance(m, nn.Conv2d) and m.kernel_size != (1, 1)]
+                    expected_kernels = [(3, 3)] if variant == "single-conv" else [(3, 3), (5, 5)]
+                    if variant == "plain-conv-sac":
+                        expected_kernels = [(3, 3), (3, 3), (5, 5), (5, 5)]
+                    self.assertEqual([conv.kernel_size for conv in spatial], expected_kernels)
+                    for conv in spatial:
+                        self.assertEqual(conv.groups, 1)
+                        self.assertEqual(conv.weight.shape[1], conv.in_channels)
+                    expected_rates = [1, 3, 1, 3] if variant == "plain-conv-sac" else [1] * len(spatial)
+                    self.assertEqual([conv.dilation[0] for conv in spatial], expected_rates)
+
+    def test_dense_variants_match_dw_with_diagonal_weights_and_allow_channel_mixing(self):
+        # Embed the DW filters on a dense kernel's channel diagonal. Matching
+        # outputs verify that channel grouping is the only computational change.
+        features = [torch.randn(2, 32, size, size) for size in (16, 8, 4)]
+        for dw_variant, dense_variant in (("plain-dw", "plain-conv"),
+                                          ("plain-dw-sac", "plain-conv-sac"),
+                                          ("single-dw", "single-conv")):
+            with self.subTest(variant=dense_variant):
+                dw = CoMerMRFP(32, 3, variant=dw_variant).eval()
+                dense = CoMerMRFP(32, 3, variant=dense_variant).eval()
+                old_state = dw.state_dict()
+                new_state = dense.state_dict()
+                for key, target in new_state.items():
+                    source = old_state[key.replace(".conv", ".dw")]
+                    if target.shape == source.shape:
+                        target.copy_(source)
+                    else:
+                        target.zero_()
+                        channels = torch.arange(source.shape[0])
+                        target[channels, channels] = source[:, 0]
+                dense.load_state_dict(new_state)
+                for actual, expected in zip(dense(features), dw(features)):
+                    torch.testing.assert_close(actual, expected, atol=1e-6, rtol=1e-5)
+                conv = next(m for m in dense.levels[0].modules()
+                            if isinstance(m, nn.Conv2d) and m.kernel_size == (3, 3))
+                with torch.no_grad():
+                    conv.weight.zero_()
+                    conv.bias.zero_()
+                    conv.weight[1, 0, 1, 1] = 1
+                probe = torch.zeros(1, conv.in_channels, 5, 5)
+                probe[:, 0] = 1
+                self.assertTrue(torch.equal(conv(probe)[:, 1], probe[:, 0]))
+
 
 @patch("src.model.build.ViTDetBackbone", TinyBackbone)
 @patch("src.model.build.ViTDetSACBackbone", TinySACBackbone)

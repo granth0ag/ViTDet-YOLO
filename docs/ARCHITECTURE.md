@@ -40,19 +40,21 @@ When `mrfp_variant` is omitted, `build_model(sac_rates=None)` builds the plain b
 ## Neck-only MRFP ablations
 
 Explicit `mrfp_variant` / `--mrfp` selection controls the neck independently of
-backbone SAC. The three paper experiments keep the plain ViT backbone:
+backbone SAC. The dense paper experiments use the plain ViT backbone:
 
 | CLI variant | Neck refinement |
 |---|---|
-| `plain-dw` | ViT-CoMer-style split-channel DW 3×3/5×5, dilation 1, concatenation |
-| `plain-dw-sac` | Same kernel groups with independent dilation 1/3 branches and learned switches inside the neck |
-| `single-dw` | One DW 3×3 over all reduced channels, dilation 1 |
+| `plain-conv` | Split-channel normal 3×3/5×5, dilation 1, concatenation |
+| `plain-conv-sac` | Same kernel groups with normal dilation 1/3 branches and learned switches inside the neck |
+| `single-conv` | One normal 3×3 over all reduced channels, dilation 1 |
 
-All three use the same shared pointwise projections, per-level BatchNorm and
+Each spatial convolution uses `groups=1`, mixing the input channels within its
+branch. The corresponding `plain-dw`, `plain-dw-sac` and `single-dw` flags select
+the earlier depthwise variants. All three dense variants use the same shared pointwise projections, per-level BatchNorm and
 activation order, with no residual/gamma in the refinement block. Spatial filters
 are independent across levels. These new experiments have separate checkpoint
 tags and must not be identified with the historical combined-model scores.
-See [the MRFP experiment guide](../README.md#mrfp-paper-ablations) for commands
+See [the MRFP experiment guide](MRFP_ABLATIONS.md) for commands
 and the distinction between neck SAC and `--sac-rates` backbone SAC.
 
 ## Research boundaries

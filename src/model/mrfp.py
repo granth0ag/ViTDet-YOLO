@@ -2,6 +2,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from src.utils.mrfp_config import COMER_MRFP_VARIANTS
 
 
 class MRFP(nn.Module):
@@ -54,19 +55,19 @@ class MRFP(nn.Module):
         return x + self.gamma * z
 
 
-class SwitchableDepthwiseConv(nn.Module):
-    """Neck-local SAC-style DW branches at dilation 1/3 with learned gates.
+class SwitchableConv(nn.Module):
+    """Neck-local SAC-style branches at dilation 1/3 with learned gates.
 
     As in this project's SAC, branches have independent convolution weights
     and zero-initialized switch logits. There is no backbone or residual here.
     """
 
-    def __init__(self, channels, kernel_size):
+    def __init__(self, channels, kernel_size, groups=1):
         super().__init__()
         self.rates = (1, 3)
         self.branches = nn.ModuleList([
             nn.Conv2d(channels, channels, kernel_size,
-                      padding=(kernel_size // 2) * rate, dilation=rate, groups=channels)
+                      padding=(kernel_size // 2) * rate, dilation=rate, groups=groups)
             for rate in self.rates
         ])
         self.switch = nn.Conv2d(channels, len(self.rates), 1)
@@ -77,6 +78,13 @@ class SwitchableDepthwiseConv(nn.Module):
         # Keep the softmax in fp32 under AMP, like the existing backbone SAC.
         gates = self.switch(F.avg_pool2d(x, 5, stride=1, padding=2)).float().softmax(1)
         return sum(gates[:, i:i + 1] * branch(x) for i, branch in enumerate(self.branches))
+
+
+class SwitchableDepthwiseConv(SwitchableConv):
+    """Existing depthwise SAC interface and checkpoint layout."""
+
+    def __init__(self, channels, kernel_size):
+        super().__init__(channels, kernel_size, groups=channels)
 
 
 class CoMerMRFP(nn.Module):
@@ -91,6 +99,9 @@ class CoMerMRFP(nn.Module):
     single-dw replaces the split 3x3/5x5 filters with one 3x3 DW over all
     reduced channels. Projections, BN, activations and level structure stay
     identical across these three variants.
+    The corresponding plain-conv, plain-conv-sac and single-conv variants
+    use groups=1 in every spatial branch. Each multi-kernel branch mixes its
+    half of the reduced channels; the final projection fuses both halves.
 
     Reference (MRFP, MultiDWConv, CTIBlock's hidden_features=dim*0.5):
     https://github.com/Traffic-X/ViT-CoMer/blob/main/detection/mmdet_custom/models/backbones/comer_modules.py
@@ -99,24 +110,31 @@ class CoMerMRFP(nn.Module):
 
     def __init__(self, ch=128, num_levels=3, variant="plain-dw"):
         super().__init__()
-        if variant not in ("plain-dw", "plain-dw-sac", "single-dw"):
+        if variant not in COMER_MRFP_VARIANTS:
             raise ValueError(f"Unsupported CoMer MRFP variant: {variant}")
         if ch < 4 or ch % 4:
             raise ValueError("ViT-CoMer-style MRFP requires channels divisible by 4")
         self.variant = variant
+        dense = variant in ("plain-conv", "plain-conv-sac", "single-conv")
+        self.single_kernel = variant in ("single-dw", "single-conv")
+        prefix = "conv" if dense else "dw"
+        self.spatial_names = (prefix,) if self.single_kernel else (prefix + "3", prefix + "5")
         hidden = ch // 2
         self.reduce = nn.Conv2d(ch, hidden, 1)
 
         def spatial_conv(channels, kernel):
             if variant == "plain-dw-sac":
                 return SwitchableDepthwiseConv(channels, kernel)
-            return nn.Conv2d(channels, channels, kernel, padding=kernel // 2, groups=channels)
+            if variant == "plain-conv-sac":
+                return SwitchableConv(channels, kernel)
+            groups = 1 if dense else channels
+            return nn.Conv2d(channels, channels, kernel, padding=kernel // 2, groups=groups)
 
         self.levels = nn.ModuleList()
         for _ in range(num_levels):
-            spatial = ({"dw": spatial_conv(hidden, 3)} if variant == "single-dw" else {
-                "dw3": spatial_conv(hidden // 2, 3),
-                "dw5": spatial_conv(hidden // 2, 5),
+            spatial = ({self.spatial_names[0]: spatial_conv(hidden, 3)} if self.single_kernel else {
+                self.spatial_names[0]: spatial_conv(hidden // 2, 3),
+                self.spatial_names[1]: spatial_conv(hidden // 2, 5),
             })
             self.levels.append(nn.ModuleDict({**spatial, "norm": nn.BatchNorm2d(hidden)}))
         self.expand = nn.Conv2d(hidden, ch, 1)
@@ -127,11 +145,11 @@ class CoMerMRFP(nn.Module):
         outputs = []
         for feature, level in zip(features, self.levels):
             z = self.reduce(feature)
-            if self.variant == "single-dw":
-                z = level["dw"](z)
+            if self.single_kernel:
+                z = level[self.spatial_names[0]](z)
             else:
                 a, b = z.chunk(2, dim=1)
-                z = torch.cat((level["dw3"](a), level["dw5"](b)), dim=1)
+                z = torch.cat((level[self.spatial_names[0]](a), level[self.spatial_names[1]](b)), dim=1)
             z = F.gelu(level["norm"](z))
             outputs.append(self.expand(F.gelu(z)))
         return outputs
@@ -144,7 +162,7 @@ class MRFPNeck(nn.Module):
         self.strides = neck.strides
         self.variant = variant
         self.mrfp = (CoMerMRFP(ch, len(self.strides), variant=variant)
-                     if variant in ("plain-dw", "plain-dw-sac", "single-dw")
+                     if variant in COMER_MRFP_VARIANTS
                      else MRFP(ch, variant=variant))
 
     def forward(self, x):

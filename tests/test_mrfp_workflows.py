@@ -111,6 +111,9 @@ class WorkflowTests(unittest.TestCase):
         self.assertLess(parameter_counts["no-switch"], parameter_counts["full"])
         self.assertLess(parameter_counts["single-dw"], parameter_counts["plain-dw"])
         self.assertLess(parameter_counts["plain-dw"], parameter_counts["plain-dw-sac"])
+        for dw, dense in (("plain-dw", "plain-conv"), ("plain-dw-sac", "plain-conv-sac"),
+                          ("single-dw", "single-conv")):
+            self.assertGreater(parameter_counts[dense], parameter_counts[dw])
 
     def test_training_accepts_existing_three_split_datasets(self):
         with patch.dict(dataset.DATASETS["foci"], {"splits": ("train", "val", "test")}):
@@ -134,7 +137,7 @@ class RunnerTests(unittest.TestCase):
         return run, prepare, verify, output.getvalue()
 
     def test_sweep_forwards_every_variant_seed_and_same_backbone_to_evaluation(self):
-        variants = ("plain-dw", "plain-dw-sac", "single-dw")
+        variants = ("plain-conv", "plain-conv-sac", "single-conv")
         run, prepare, verify, _ = self.run_main([
             "--skip-prepare", "--seeds", "42", "43", "44", "--mrfp-variants", *variants])
         prepare.assert_not_called()

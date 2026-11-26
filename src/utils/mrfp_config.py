@@ -1,7 +1,8 @@
 """MRFP experiment names shared by every entry point; no training side effects."""
 
-MRFP_VARIANTS = ("none", "full", "no-dilation", "no-switch", "no-dilation-no-switch",
-                 "plain-dw", "plain-dw-sac", "single-dw")
+COMER_MRFP_VARIANTS = ("plain-dw", "plain-dw-sac", "single-dw",
+                       "plain-conv", "plain-conv-sac", "single-conv")
+MRFP_VARIANTS = ("none", "full", "no-dilation", "no-switch", "no-dilation-no-switch") + COMER_MRFP_VARIANTS
 
 MRFP_DESCRIPTIONS = {
     "none": "SFP only (no MRFP)",
@@ -12,6 +13,9 @@ MRFP_DESCRIPTIONS = {
     "plain-dw": "Pure MRFP (ViT-CoMer-style): split-channel DW 3x3/5x5, concat, per-level BN",
     "plain-dw-sac": "ViT-CoMer-style MRFP + neck SAC: DW 3x3/5x5, dilation 1/3, learned switches",
     "single-dw": "Single receptive-field fusion: DW 3x3, dilation 1, same BN and pointwise fusion",
+    "plain-conv": "Dense MRFP: split-channel normal 3x3/5x5, concat, per-level BN",
+    "plain-conv-sac": "Dense MRFP + neck SAC: normal 3x3/5x5, dilation 1/3, learned switches",
+    "single-conv": "Single receptive-field fusion: normal 3x3, dilation 1, same BN and pointwise fusion",
 }
 
 

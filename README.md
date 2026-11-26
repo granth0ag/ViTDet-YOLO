@@ -69,13 +69,13 @@ python inference.py --dataset foci_cell --aug A --seed 42 --ckpt last path/to/ce
 
 ## MRFP paper ablations
 
-The current neck experiments use the same plain ViT backbone to compare three designs. `plain-dw` uses ViT-CoMer-style depthwise 3 × 3 and 5 × 5 branches. `plain-dw-sac` adds learned dilation switches inside those neck branches. `single-dw` uses one depthwise 3 × 3 per pyramid level with the same output projection. The scores above belong to the earlier experiments.
+The current neck experiments use the same plain ViT backbone with **normal (dense) convolutions**. `plain-conv` uses channel-split 3 × 3 and 5 × 5 branches. `plain-conv-sac` adds learned dilation 1/3 switches inside those neck branches. `single-conv` uses one normal 3 × 3 per pyramid level with the same output projection. Every spatial branch uses `groups=1`. The scores above belong to the earlier experiments.
 
 Preview the three-seed comparison on prepared FOCI data:
 
 ```bash
 python vit_foci.py --skip-prepare --aug A --epochs 200 --seeds 42 43 44 \
-  --mrfp-variants plain-dw plain-dw-sac single-dw --dry-run
+  --mrfp-variants plain-conv plain-conv-sac single-conv --dry-run
 ```
 
 Remove `--dry-run` to train and evaluate. [Full ablation guide, checkpoint names and compatibility](docs/MRFP_ABLATIONS.md)
