@@ -100,6 +100,55 @@ Repeat training with seeds 43 and 44 for the three-seed study, then evaluate wit
 The source root contains `cell_Pic1/` and `Xml_cell/`; on Kaggle supply the mounted
 dataset root under `/kaggle/input/`. Outputs default to the loader's cell path.
 
+### Complete Kaggle cell run
+
+Attach the extracted FOCI dataset through Kaggle's **Add Input**. Run this cell
+after installing the repository dependencies. Each fresh session prepares its
+own `/kaggle/temp/foci_cell` folder before training. Preparation fixes the data
+split at seed 42, while training uses seeds 42, 43 and 44.
+
+```python
+import os
+from pathlib import Path
+
+os.chdir("/kaggle/working/ViTDet-YOLO")
+if not Path("prepare_foci_cell.py").is_file():
+    raise RuntimeError("Update the repository to include prepare_foci_cell.py")
+
+roots = sorted({
+    folder.parent.resolve()
+    for folder in Path("/kaggle/input").rglob("cell_Pic1")
+    if folder.is_dir() and (folder.parent / "Xml_cell").is_dir()
+})
+if len(roots) != 1:
+    raise RuntimeError(
+        f"Expected one dataset containing cell_Pic1 and Xml_cell, found {roots}. "
+        "Attach the extracted FOCI dataset through Add Input."
+    )
+raw_root = str(roots[0])
+
+!python prepare_foci_cell.py --raw-root "{raw_root}" --output /kaggle/temp/foci_cell --val-size 5 --seed 42
+if _exit_code != 0:
+    raise RuntimeError("Cell dataset preparation failed")
+
+for split in ("train", "val"):
+    folder = Path("/kaggle/temp/foci_cell/images") / split
+    print(f"{split}: {len(list(folder.iterdir()))} prepared images", flush=True)
+
+for variant in ("none", "plain-conv", "single-conv", "plain-conv-sac"):
+    for seed in (42, 43, 44):
+        print(f"\nCell training | {variant} | seed={seed} | epochs=200", flush=True)
+        !python train.py --dataset foci_cell --aug A --epochs 200 --seed {seed} --mrfp {variant}
+        if _exit_code != 0:
+            raise RuntimeError(f"Training failed: {variant}, seed {seed}")
+
+!python evaluate.py --dataset foci_cell --aug A --seeds 42 43 44 --configs none --mrfp-variants none plain-conv single-conv plain-conv-sac --ckpt both
+if _exit_code != 0:
+    raise RuntimeError("Cell evaluation failed")
+
+print("All 12 cell runs and combined evaluation completed.")
+```
+
 ### Dense and depthwise runs
 
 The earlier `plain-dw`, `plain-dw-sac` and `single-dw` flags retain their depthwise

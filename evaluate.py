@@ -17,6 +17,8 @@ from src.utils.mrfp_config import (
     add_mrfp_args, requested_variants, resolve_mrfp, model_label, mrfp_report_suffix,
 )
 
+from src.utils.run_config import run_name, run_suffix
+
 USE_P2, BATCH_SIZE, IOU_THRES = False, 4, 0.65
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -32,11 +34,11 @@ def _sync():
 
 
 @torch.no_grad()
-def evaluate_run(dataset, aug, seed, rates, split, kind, conf, img_size=None, mrfp_variant=None):
+def evaluate_run(dataset, aug, seed, rates, split, kind, conf, img_size=None, mrfp_variant=None, run_name="", full_precision=False):
     """One checkpoint -> dict of metrics, or None if the checkpoint doesn't exist."""
     DS = DATASETS[dataset]
     size = img_size or DS["img_size"]
-    path = f"{kind}_{run_tag(dataset, size, USE_P2, aug, seed, sac=rates, mrfp_variant=mrfp_variant)}.pt"
+    path = f"{kind}_{run_tag(dataset, size, USE_P2, aug, seed, sac=rates, mrfp_variant=mrfp_variant, run_name=run_name)}.pt"
     if not Path(path).exists():
         print(f"  [skip] missing {path}")
         return None
@@ -59,7 +61,7 @@ def evaluate_run(dataset, aug, seed, rates, split, kind, conf, img_size=None, mr
     for bi, (images, targets, _) in enumerate(loader):
         images = images.to(device)
         _sync(); t0 = time.perf_counter()
-        with torch.amp.autocast("cuda", enabled=(device == "cuda")):
+        with torch.amp.autocast("cuda", enabled=(device == "cuda" and not full_precision)):
             y, _ = model(images)
         _sync(); dt = time.perf_counter() - t0
         if bi >= 3:                                   # skip warm-up batches
@@ -133,6 +135,8 @@ if __name__ == "__main__":
     ap.add_argument("--split", default=None, choices=["val", "test"])
     ap.add_argument("--ckpt", default="both", choices=["best", "last", "both"])
     ap.add_argument("--conf", type=float, default=0.001)
+    ap.add_argument("--run-name", type=run_name, default="")
+    ap.add_argument("--full-precision", action="store_true", help="match notebook/training validation inference precision")
     add_mrfp_args(ap, sweep=True)
     a = ap.parse_args()
     variants = requested_variants(a)
@@ -157,10 +161,11 @@ if __name__ == "__main__":
             for s in a.seeds:
                 print(f"{kind} | {n} | seed {s}")
                 r = evaluate_run(a.dataset, a.aug, s, rates, split, kind, a.conf, a.img_size,
-                                  mrfp_variant=variant)
+                                  mrfp_variant=variant, run_name=a.run_name, full_precision=a.full_precision)
                 if r:
                     res[n][s] = r
                     out_rows.append(dict(config=n, seed=s, ckpt=kind, split=split,
+                                         run_name=a.run_name, conf=a.conf, full_precision=a.full_precision,
                                          sac_rates="none" if rates is None else ",".join(map(str, rates)),
                                          mrfp_variant=resolve_mrfp(variant, rates), **r))
         out_md.append(build_tables(res, names, split, kind))
@@ -171,6 +176,7 @@ if __name__ == "__main__":
     stem = f"results_{a.dataset}_aug{a.aug}_{split}" + mrfp_report_suffix(variants)
     if variants != [None]:
         stem += "_bb-" + "_".join("vit" if c == "none" else "sac" + c.replace(",", "-") for c in configs)
+    stem += run_suffix(a.run_name)
     Path(f"{stem}.md").write_text(report)
     with open(f"{stem}.csv", "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(out_rows[0])) if out_rows else None

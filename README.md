@@ -69,6 +69,10 @@ in the same cell training command. Use that same variant for evaluation. The
 `vit_foci.py` convenience runner selects the virus task; cell experiments use
 `train.py` and `evaluate.py` with `--dataset foci_cell`.
 
+For a fresh Kaggle session, use the [complete cell ablation setup](docs/MRFP_ABLATIONS.md#complete-kaggle-cell-run).
+It finds the attached raw data, prepares `/kaggle/temp/foci_cell`, then trains
+the four variants over three seeds and evaluates their checkpoints.
+
 Each label row contains class ID `0` and normalized box center coordinates, width and height. `prepare_foci.py` defaults to 15 validation images. The `vit_foci.py` runner defaults to 14 when preparing data itself. Use `--val-size 15` with the runner to match the reported count, or `--skip-prepare` to reuse the exact prepared split. On Kaggle, the loader reads prepared datasets from `/kaggle/temp/`.
 
 Train and compare the virus baseline and combined model for one seed:
@@ -103,3 +107,5 @@ Remove `--dry-run` to train and evaluate. [Full ablation guide, checkpoint names
 The microscopy data and task definitions are credited to A. Singh et al., *Automatic Detection of Virus Infection Patterns in Foci Images Using Switchable Convolutions* (IEEE Access, 2024), and A. Singh and S. Mukherjee, [*Detection of Virus and Small Cell Patches in Foci Images Using Switchable Convolution and Feature Pyramid Networks*](https://arxiv.org/abs/2605.22290).
 
 Results are from Granth Agarwal's *A Vision Transformer YOLOv8 Framework with Switchable Atrous Convolution for Multi-Scale Object Detection* (November 2026), especially Tables 6–8. Earlier general detection experiments are archived in [VOC and African Wildlife benchmarks](docs/LEGACY_BENCHMARKS.md).
+
+For separate cell notebook reproduction and existing FOCI settings, see [isolated run profiles](docs/ISOLATED_RUNS.md). Each profile uses separate checkpoint/log/report names without changing dataset preparation.

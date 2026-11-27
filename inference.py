@@ -16,6 +16,8 @@ from src.model.build import build_model, run_tag
 from src.utils.mrfp_config import add_mrfp_args, model_label
 
 
+from src.utils.run_config import run_name
+
 # ---------------- args ----------------
 ap = argparse.ArgumentParser()
 
@@ -32,6 +34,7 @@ ap.add_argument("--ckpt", default="best", choices=["best", "last"])
 ap.add_argument("--conf", type=float, default=0.25,
                 help="detections ka confidence threshold")
 ap.add_argument("paths", nargs="*", help="image files ya folders")
+ap.add_argument("--run-name", type=run_name, default="", help="same run name as training")
 add_mrfp_args(ap)
 
 args = ap.parse_args()
@@ -56,7 +59,8 @@ TAG = run_tag(
     args.aug,
     args.seed,
     sac=rates,
-    mrfp_variant=args.mrfp
+    mrfp_variant=args.mrfp,
+    run_name=args.run_name
 )
 
 CKPT = f"{args.ckpt}_{TAG}.pt"

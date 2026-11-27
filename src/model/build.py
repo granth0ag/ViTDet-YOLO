@@ -6,9 +6,11 @@ from src.model.vit_sac import ViTDetSACBackbone
 from src.model.mrfp import MRFPNeck  
 from src.utils.mrfp_config import resolve_mrfp, mrfp_suffix
 
-def run_tag(dataset, img_size, use_p2, aug, seed, sac=None, mrfp_variant=None):
+from src.utils.run_config import run_suffix
+
+def run_tag(dataset, img_size, use_p2, aug, seed, sac=None, mrfp_variant=None, run_name=""):
     tag = f"{dataset}_{img_size}_{'p2' if use_p2 else 'p3p5'}_aug{aug}_s{seed}"
-    return tag + (f"_sac{''.join(map(str, sac))}" if sac else "") + mrfp_suffix(mrfp_variant)
+    return tag + (f"_sac{''.join(map(str, sac))}" if sac else "") + mrfp_suffix(mrfp_variant) + run_suffix(run_name)
 
 
 def build_model(img_size=640, num_classes=1, use_p2=False, out_ch=128,

@@ -1,6 +1,7 @@
 # train.py
 import argparse
 import random
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -14,6 +15,8 @@ from src.model.vit_sac import SAC
 from src.utils.mrfp_config import add_mrfp_args, model_label
 
 
+from src.utils.run_config import run_name, positive_float, nonnegative_int
+
 # ---------------- args ----------------
 ap = argparse.ArgumentParser()
 ap.add_argument("--aug", default="D", choices=list(AUG_PRESETS), help="augmentation preset")
@@ -24,6 +27,9 @@ ap.add_argument("--close-mosaic", type=int, default=10, help="aakhri itne epochs
 ap.add_argument("--eval-every", type=int, default=5)
 ap.add_argument("--dataset", default="wildlife", choices=list(DATASETS))
 ap.add_argument("--img-size", type=int, default=None, help="override the dataset's default")
+ap.add_argument("--lr-backbone", type=positive_float, default=3e-4)
+ap.add_argument("--num-workers", type=nonnegative_int, default=4)
+ap.add_argument("--run-name", type=run_name, default="", help="isolate checkpoints and logs; existing named checkpoints are protected")
 add_mrfp_args(ap)
 args = ap.parse_args()
 
@@ -34,22 +40,24 @@ BATCH_SIZE = 4
 EPOCHS = args.epochs
 CLOSE_MOSAIC = args.close_mosaic
 EVAL_EVERY = args.eval_every
-LR_BACKBONE = 3e-4 # was 1e-4 previously 
+LR_BACKBONE = args.lr_backbone
 LR_HEAD = 1e-3
 WEIGHT_DECAY = 0.05
 DROP_PATH = 0.1
 USE_P2 = False            # True = stride-4 level (evaluate.py / inference.py mein SAME hona chahiye)
 SEED = args.seed
-NUM_WORKERS = 4
+NUM_WORKERS = args.num_workers
 DS = DATASETS[args.dataset]
 IMG_SIZE = args.img_size or DS["img_size"]
 CLASS_NAMES, DATA_ROOT = DS["classes"], DS["root"]
 NUM_CLASSES = len(CLASS_NAMES)
-TAG = run_tag(args.dataset, IMG_SIZE, USE_P2, args.aug, SEED, sac=rates, mrfp_variant=args.mrfp)
+TAG = run_tag(args.dataset, IMG_SIZE, USE_P2, args.aug, SEED, sac=rates, mrfp_variant=args.mrfp, run_name=args.run_name)
 RUN = args.aug
 AUG = AUG_PRESETS[RUN]
 LOG_DIR = f"runs/{TAG}"
 BEST_CKPT, LAST_CKPT = f"best_{TAG}.pt", f"last_{TAG}.pt"
+if args.run_name and any(Path(p).exists() for p in (BEST_CKPT, LAST_CKPT)):
+    ap.error("Named run already has checkpoints. Choose a different --run-name to keep existing results.")
 device = "cuda" if torch.cuda.is_available() else "cpu"
 scaler = torch.amp.GradScaler("cuda") if device == "cuda" else None
 
@@ -62,6 +70,7 @@ train_loader, val_loader, *_ = build_folder_loaders(
 print(f"run: {TAG} | {model_label(rates, args.mrfp)}")
 print(f"dataset={args.dataset} img_size={IMG_SIZE} seed={SEED} | aug {RUN}: {AUG}")
 print(f"logs: {LOG_DIR} | checkpoints: {BEST_CKPT}, {LAST_CKPT}")
+print(f"backbone_lr={LR_BACKBONE} head_lr={LR_HEAD} workers={NUM_WORKERS}")
 print(f"epochs={EPOCHS} close_mosaic={CLOSE_MOSAIC} eval_every={EVAL_EVERY}")
 print(f"train: {len(train_loader.dataset)} | val: {len(val_loader.dataset)} images")
 

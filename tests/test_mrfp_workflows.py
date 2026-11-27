@@ -115,9 +115,38 @@ class WorkflowTests(unittest.TestCase):
                           ("single-dw", "single-conv")):
             self.assertGreater(parameter_counts[dense], parameter_counts[dw])
 
+    def test_named_run_train_evaluate_infer_and_protect_existing_checkpoints(self):
+        args = ["--dataset", "foci", "--aug", "A", "--seed", "42", "--epochs", "1",
+                "--mrfp", "full", "--lr-backbone", "1e-4", "--num-workers", "2",
+                "--run-name", "notebook-test"]
+        trained, _ = self.run_script("train.py", args)
+        self.assertEqual(trained["LR_BACKBONE"], 1e-4)
+        self.assertEqual(trained["NUM_WORKERS"], 2)
+        self.assertEqual(trained["optimizer"].param_groups[0]["initial_lr"], 1e-4)
+        legacy_tag = run_tag("foci", 64, False, "A", 42, mrfp_variant="full")
+        self.assertFalse(Path(f"best_{legacy_tag}.pt").exists())
+        original = Path(trained["BEST_CKPT"]).read_bytes()
+        with self.assertRaises(SystemExit):
+            self.run_script("train.py", args)
+        self.assertEqual(Path(trained["BEST_CKPT"]).read_bytes(), original)
+        evaluated, output = self.run_script("evaluate.py", [
+            "--dataset", "foci", "--aug", "A", "--seeds", "42", "--mrfp", "full",
+            "--run-name", "notebook-test", "--conf", "0.01", "--full-precision"])
+        self.assertNotIn("[skip]", output)
+        self.assertEqual(len(evaluated["out_rows"]), 2)
+        self.assertTrue(evaluated["stem"].endswith("_run-notebook-test"))
+        self.assertTrue(all(r["conf"] == 0.01 and r["full_precision"] for r in evaluated["out_rows"]))
+        inferred, _ = self.run_script("inference.py", [
+            "--dataset", "foci", "--aug", "A", "--seed", "42", "--mrfp", "full",
+            "--run-name", "notebook-test", str(self.data / "images/val/0.png")])
+        self.assertEqual(inferred["CKPT"], trained["BEST_CKPT"])
+
     def test_training_accepts_existing_three_split_datasets(self):
         with patch.dict(dataset.DATASETS["foci"], {"splits": ("train", "val", "test")}):
             trained, _ = self.run_script("train.py", ["--dataset", "foci", "--epochs", "1", "--mrfp", "full"])
+        self.assertEqual(trained["LR_BACKBONE"], 3e-4)
+        self.assertEqual(trained["NUM_WORKERS"], 4)
+        self.assertEqual(trained["args"].run_name, "")
         self.assertEqual(len(trained["train_loader"].dataset), 2)
         self.assertEqual(len(trained["val_loader"].dataset), 2)
 
