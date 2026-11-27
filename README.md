@@ -49,7 +49,25 @@ python -m pip install -r requirements.txt
 | Task | Dataset flag | Prepare the data |
 |---|---|---|
 | Virus foci | `--dataset foci` | Place the source folders `JPEGImages/JPEGImages/` and `Virus_anno/Annotations/` under `data/foci_raw/`, then run `python prepare_foci.py`. |
-| Cell patches | `--dataset foci_cell` | Place YOLO-format data under `data/foci_cell/` with `images/train`, `images/val`, `labels/train` and `labels/val`. |
+| Cell patches | `--dataset foci_cell` | Run `python prepare_foci_cell.py --raw-root /path/to/Foci_Dataset` on the folder containing `cell_Pic1/` and `Xml_cell/`. |
+
+Cell preparation defaults to five validation images and split seed 42. With the
+50-image source this creates 45 training images and five validation images. XML
+class `cell` maps to YOLO class `0` (`cell_patch`). The `.done` manifest records
+source hashes, image membership and box counts. Validation box previews are
+saved under `data/foci_cell/_check/`. On Kaggle, the default output is
+`/kaggle/temp/foci_cell/`, matching the dataset loader.
+
+```bash
+python prepare_foci_cell.py --raw-root /path/to/Foci_Dataset --val-size 5 --seed 42
+python train.py --dataset foci_cell --aug A --epochs 200 --seed 42 --mrfp none
+python evaluate.py --dataset foci_cell --aug A --seeds 42 --mrfp none --ckpt both
+```
+
+For dense MRFP experiments, select `plain-conv`, `plain-conv-sac` or `single-conv`
+in the same cell training command. Use that same variant for evaluation. The
+`vit_foci.py` convenience runner selects the virus task; cell experiments use
+`train.py` and `evaluate.py` with `--dataset foci_cell`.
 
 Each label row contains class ID `0` and normalized box center coordinates, width and height. `prepare_foci.py` defaults to 15 validation images. The `vit_foci.py` runner defaults to 14 when preparing data itself. Use `--val-size 15` with the runner to match the reported count, or `--skip-prepare` to reuse the exact prepared split. On Kaggle, the loader reads prepared datasets from `/kaggle/temp/`.
 

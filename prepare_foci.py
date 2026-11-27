@@ -190,7 +190,7 @@ def annotation_for_image(annotation_dir, image_path):
 # VOC XML -> YOLO conversion
 # ---------------------------------------------------------------------
 
-def convert(image_path, annotation_path, keep_difficult=True):
+def convert(image_path, annotation_path, keep_difficult=True, source_class="virus"):
     """
     Returns:
         (YOLO label lines, image path)
@@ -203,8 +203,7 @@ def convert(image_path, annotation_path, keep_difficult=True):
 
     Coordinates are normalized to [0, 1].
 
-    FOCI has one class only:
-        virus -> class 0
+    The selected source_class maps to class 0 (default: virus).
 
     Difficult objects are always kept.
     """
@@ -226,10 +225,10 @@ def convert(image_path, annotation_path, keep_difficult=True):
     for obj in root.iter("object"):
         name = (obj.findtext("name") or "").strip().lower()
 
-        if name != "virus":
+        if name != source_class:
             raise SystemExit(
                 f"unknown class '{name}' in {annotation_path.name}; "
-                "FOCI is expected to contain only the class 'virus'"
+                f"expected class '{source_class}'"
             )
 
         # DO NOT discard difficult objects.

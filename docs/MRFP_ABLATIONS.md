@@ -79,6 +79,27 @@ backbone configuration in their filenames. Pass the **same MRFP variant** to
 training, evaluation and inference. Train each new architecture; old SAC-backbone
 checkpoints should not be relabelled as these neck-only experiments.
 
+### Cell-patch experiments
+
+Prepare the cell images and XML annotations once, then use `foci_cell` for all
+training and evaluation runs. The default split uses five validation images
+and seed 42. Hold this dataset split fixed while varying training seeds.
+
+```bash
+python prepare_foci_cell.py --raw-root /path/to/Foci_Dataset --val-size 5 --seed 42
+python train.py --dataset foci_cell --aug A --epochs 200 --seed 42 --mrfp none
+python train.py --dataset foci_cell --aug A --epochs 200 --seed 42 --mrfp plain-conv
+python train.py --dataset foci_cell --aug A --epochs 200 --seed 42 --mrfp plain-conv-sac
+python train.py --dataset foci_cell --aug A --epochs 200 --seed 42 --mrfp single-conv
+python evaluate.py --dataset foci_cell --aug A --seeds 42 \
+  --mrfp-variants none plain-conv plain-conv-sac single-conv
+```
+
+Repeat training with seeds 43 and 44 for the three-seed study, then evaluate with
+`--seeds 42 43 44`. Prepared images and labels are reused across every run.
+The source root contains `cell_Pic1/` and `Xml_cell/`; on Kaggle supply the mounted
+dataset root under `/kaggle/input/`. Outputs default to the loader's cell path.
+
 ### Dense and depthwise runs
 
 The earlier `plain-dw`, `plain-dw-sac` and `single-dw` flags retain their depthwise
