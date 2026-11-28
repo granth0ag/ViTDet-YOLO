@@ -29,25 +29,43 @@ AP@0.50 improved in all three seed pairs. The higher overall AP came with lower 
 
 The cell-patch experiments used a **200-epoch training schedule**, with 45 training images and five validation images. All annotated validation objects fall in the small-object category. Table 8 reports the following validation scores (%).
 
-| Model | mAP@0.25 | mAP@0.50 | mAP@0.75 | mAP@0.50:0.95 | AR@100 |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Plain ViT | 53.61 | 45.57 | 3.94 | 15.33 | 20.50 |
-| SAC in the ViT backbone | 53.66 | 43.74 | 4.34 | 15.28 | 20.43 |
-| SAC in the YOLOv8 head | 52.25 | 42.28 | 3.21 | 13.34 | 18.51 |
-| Backbone SAC + dense MRFP neck | 54.89 | 46.42 | 3.85 | 15.48 | 20.60 |
+| Metric | Plain ViT | SAC in the ViT backbone | SAC in the YOLOv8 head | Backbone SAC + dense MRFP neck |
+| --- | ---: | ---: | ---: | ---: |
+| mAP@0.25 | 53.61 | 53.66 | 52.25 | 54.89 |
+| mAP@0.50 | 45.57 | 43.74 | 42.28 | 46.42 |
+| mAP@0.75 | 3.94 | 4.34 | 3.21 | 3.85 |
+| mAP@0.50:0.95 | 15.33 | 15.28 | 13.34 | 15.48 |
+| AR@100 | 20.50 | 20.43 | 18.51 | 20.60 |
 
-The first three rows use final-epoch evaluations. The combined row uses the latest pre-final validation snapshot reported in Table 8. It reached 46.42% mAP@0.50 and 15.48% mAP@0.50:0.95. Backbone SAC had the highest mAP@0.75 (4.34%). [Checkpoint details](docs/EXPERIMENTS.md#cell-patch-detection)
+The first three model columns use final-epoch evaluations. The combined model column uses the latest pre-final validation snapshot reported in Table 8. It reached 46.42% mAP@0.50 and 15.48% mAP@0.50:0.95. Backbone SAC had the highest mAP@0.75 (4.34%). [Checkpoint details](docs/EXPERIMENTS.md#cell-patch-detection)
 
 ## New cell result: original residual MRFP, plain ViT backbone
 
 A separate **seed-42, 200-epoch** run compares `--mrfp none` against `--mrfp full` on the same 45/5 cell split. The ViT backbone stays plain; SAC-style switching is inside the original dense residual MRFP neck. This is not the channel-split CoMer-style `plain-conv-sac` variant or the earlier combined backbone-SAC model.
 
-| Checkpoint | Model | AP@0.25 | AP@0.50 | AP@0.75 | AP@0.50:0.95 | AP small | AR@100 |
-|---|---|---:|---:|---:|---:|---:|---:|
-| Best validation AP | Baseline | 53.51 | 45.30 | 4.27 | 15.94 | 15.94 | 20.95 |
-| Best validation AP | Original dense residual MRFP | 53.75 | **47.59** | **5.19** | **15.99** | **15.99** | 20.72 |
-| Last, epoch 200 | Baseline | 53.45 | 45.29 | 4.06 | 15.64 | 15.64 | 20.68 |
-| Last, epoch 200 | Original dense residual MRFP | 53.75 | **47.59** | **5.19** | **15.99** | **15.99** | 20.72 |
+**Best validation AP checkpoints**
+
+| Metric | Plain ViT | Original dense residual MRFP | Change (percentage points) |
+| --- | ---: | ---: | ---: |
+| mAP@0.25 | 53.51 | 53.75 | +0.24 |
+| mAP@0.50 | 45.30 | 47.59 | +2.29 |
+| mAP@0.75 | 4.27 | 5.19 | +0.92 |
+| mAP@0.50:0.95 | 15.94 | 15.99 | +0.04† |
+| mAP small | 15.94 | 15.99 | ≈+0.05 |
+| AR@100 | 20.95 | 20.72 | −0.23 |
+
+**Last checkpoints — epoch 200**
+
+| Metric | Plain ViT | Original dense residual MRFP | Change (percentage points) |
+| --- | ---: | ---: | ---: |
+| mAP@0.25 | 53.45 | 53.75 | +0.30 |
+| mAP@0.50 | 45.29 | 47.59 | +2.30 |
+| mAP@0.75 | 4.06 | 5.19 | +1.13 |
+| mAP@0.50:0.95 | 15.64 | 15.99 | +0.34† |
+| mAP small | 15.64 | 15.99 | ≈+0.35 |
+| AR@100 | 20.68 | 20.72 | +0.04 |
+
+† COCO AP deltas are copied from the evaluator's unrounded paired calculation. Other changes are calculated from displayed rounded scores.
 
 Scores are validation percentages. At epoch 200, AP@0.50 improves by **2.30 percentage points**. The evaluator reports paired COCO AP gains of **+0.04 pp (best)** and **+0.34 pp (last)** using unrounded values; subtracting the displayed rounded scores can differ by 0.01 pp. Best-checkpoint AR@100 decreases by 0.23 pp. This is one seed, not a three-seed or statistical-significance result.
 
