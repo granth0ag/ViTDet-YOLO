@@ -2,7 +2,7 @@
 
 This PyTorch detector draws bounding boxes around **virus foci** and **small cell patches** in microscopy images. These are two separate, single-class detection tasks. The project studies whether giving a Vision Transformer access to different local neighborhoods improves box localization.
 
-On the virus-patch validation split, adding switchable atrous convolution (SAC) to the backbone and multi-receptive-field refinement (MRFP) to the neck raised mean AP@0.50 from **78.84% to 80.47%** across three matched training seeds. Cell-patch localization was harder. In the earlier report, AP@0.75 ranged from **3.21% to 4.34%** across four cell models. A separate seed-42 neck-only experiment now reaches **47.59% AP@0.50 and 5.19% AP@0.75**, using the original dense residual MRFP and a plain ViT backbone on five validation images.
+On the virus-patch validation split, adding switchable atrous convolution (SAC) to the backbone and multi-receptive-field refinement (MRFP) to the neck raised mean AP@0.50 from **78.84% to 80.47%** across three matched training seeds. Cell-patch localization was harder. A separate seed-42 neck-only experiment reaches **47.59% AP@0.50 and 5.19% AP@0.75**, using the original dense residual MRFP and a plain ViT backbone on five validation images.
 
 ## Detector
 
@@ -26,20 +26,6 @@ The report describes 149 images, with 134 for training and 15 for validation. Th
 AP@0.50 improved in all three seed pairs. The higher overall AP came with lower mean AP on small objects. [Per-seed scores and full metrics](docs/EXPERIMENTS.md#virus-patch-detection)
 
 ## Cell-patch detection
-
-The cell-patch experiments used a **200-epoch training schedule**, with 45 training images and five validation images. All annotated validation objects fall in the small-object category. Table 8 reports the following validation scores (%).
-
-| Metric | Plain ViT | SAC in the ViT backbone | SAC in the YOLOv8 head | Backbone SAC + dense MRFP neck |
-| --- | ---: | ---: | ---: | ---: |
-| mAP@0.25 | 53.61 | 53.66 | 52.25 | 54.89 |
-| mAP@0.50 | 45.57 | 43.74 | 42.28 | 46.42 |
-| mAP@0.75 | 3.94 | 4.34 | 3.21 | 3.85 |
-| mAP@0.50:0.95 | 15.33 | 15.28 | 13.34 | 15.48 |
-| AR@100 | 20.50 | 20.43 | 18.51 | 20.60 |
-
-The first three model columns use final-epoch evaluations. The combined model column uses the latest pre-final validation snapshot reported in Table 8. It reached 46.42% mAP@0.50 and 15.48% mAP@0.50:0.95. Backbone SAC had the highest mAP@0.75 (4.34%). [Checkpoint details](docs/EXPERIMENTS.md#cell-patch-detection)
-
-## New cell result: original residual MRFP, plain ViT backbone
 
 A separate **seed-42, 200-epoch** run compares `--mrfp none` against `--mrfp full` on the same 45/5 cell split. The ViT backbone stays plain; SAC-style switching is inside the original dense residual MRFP neck. This is not the channel-split CoMer-style `plain-conv-sac` variant or the earlier combined backbone-SAC model.
 
