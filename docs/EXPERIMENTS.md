@@ -11,6 +11,10 @@ This document separates **recorded empirical observations** from capabilities of
 
 Both inputs were prepared for 640×640 detection. Dataset source and annotation credit: Amrita Singh and colleagues (see README references). A local YOLO-format copy is needed; original microscopy data are not redistributed here.
 
+## New cell neck-only experiment
+
+The separate Kaggle version-42 experiment evaluates the plain ViT baseline and original dense residual MRFP (`full`), with no backbone SAC, for seed 42 and 200 epochs. Best and last checkpoints are recorded separately in [the cell reproduction result record](CELL_NOTEBOOK_RESULTS.md), with a [rounded CSV](../results/cell_notebook_seed42_kaggle_v42.csv). These results do not replace the historical report below and are not a three-seed study.
+
 ## Cell-patch detection
 
 **Reported single-seed experiments:** baseline, SAC in QKV backbone, and SAC in YOLOv8 detection head, final training epoch 200; source: November 2026 experimental report, Tables 4–5 (sections 4.3–4.4). **Combined MRFP + SAC:** user-provided training log at **epoch 195** of a run scheduled for 200 epochs. Its score should not be misrepresented as the final epoch-200 evaluation.

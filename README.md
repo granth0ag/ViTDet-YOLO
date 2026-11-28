@@ -2,7 +2,7 @@
 
 This PyTorch detector draws bounding boxes around **virus foci** and **small cell patches** in microscopy images. These are two separate, single-class detection tasks. The project studies whether giving a Vision Transformer access to different local neighborhoods improves box localization.
 
-On the virus-patch validation split, adding switchable atrous convolution (SAC) to the backbone and multi-receptive-field refinement (MRFP) to the neck raised mean AP@0.50 from **78.84% to 80.47%** across three matched training seeds. Cell-patch localization was harder. Across the four cell models, AP@0.75 ranged from **3.21% to 4.34%** on five validation images.
+On the virus-patch validation split, adding switchable atrous convolution (SAC) to the backbone and multi-receptive-field refinement (MRFP) to the neck raised mean AP@0.50 from **78.84% to 80.47%** across three matched training seeds. Cell-patch localization was harder. In the earlier report, AP@0.75 ranged from **3.21% to 4.34%** across four cell models. A separate seed-42 neck-only experiment now reaches **47.59% AP@0.50 and 5.19% AP@0.75**, using the original dense residual MRFP and a plain ViT backbone on five validation images.
 
 ## Detector
 
@@ -37,6 +37,27 @@ The cell-patch experiments used a **200-epoch training schedule**, with 45 train
 | Backbone SAC + dense MRFP neck | 54.89 | 46.42 | 3.85 | 15.48 | 20.60 |
 
 The first three rows use final-epoch evaluations. The combined row uses the latest pre-final validation snapshot reported in Table 8. It reached 46.42% mAP@0.50 and 15.48% mAP@0.50:0.95. Backbone SAC had the highest mAP@0.75 (4.34%). [Checkpoint details](docs/EXPERIMENTS.md#cell-patch-detection)
+
+## New cell result: original residual MRFP, plain ViT backbone
+
+A separate **seed-42, 200-epoch** run compares `--mrfp none` against `--mrfp full` on the same 45/5 cell split. The ViT backbone stays plain; SAC-style switching is inside the original dense residual MRFP neck. This is not the channel-split CoMer-style `plain-conv-sac` variant or the earlier combined backbone-SAC model.
+
+| Checkpoint | Model | AP@0.25 | AP@0.50 | AP@0.75 | AP@0.50:0.95 | AP small | AR@100 |
+|---|---|---:|---:|---:|---:|---:|---:|
+| Best validation AP | Baseline | 53.51 | 45.30 | 4.27 | 15.94 | 15.94 | 20.95 |
+| Best validation AP | Original dense residual MRFP | 53.75 | **47.59** | **5.19** | **15.99** | **15.99** | 20.72 |
+| Last, epoch 200 | Baseline | 53.45 | 45.29 | 4.06 | 15.64 | 15.64 | 20.68 |
+| Last, epoch 200 | Original dense residual MRFP | 53.75 | **47.59** | **5.19** | **15.99** | **15.99** | 20.72 |
+
+Scores are validation percentages. At epoch 200, AP@0.50 improves by **2.30 percentage points**. The evaluator reports paired COCO AP gains of **+0.04 pp (best)** and **+0.34 pp (last)** using unrounded values; subtracting the displayed rounded scores can differ by 0.01 pp. Best-checkpoint AR@100 decreases by 0.23 pp. This is one seed, not a three-seed or statistical-significance result.
+
+[Verified Kaggle run, version 42](https://www.kaggle.com/code/granthag/vit-foci?scriptVersionId=374856046) · [Full settings and provenance](docs/CELL_NOTEBOOK_RESULTS.md) · [Rounded results CSV](results/cell_notebook_seed42_kaggle_v42.csv)
+
+To run the same profile on already prepared cell data:
+
+```bash
+python run_isolated.py --profile cell-notebook
+```
 
 ## Run a microscopy experiment
 
@@ -91,7 +112,7 @@ python inference.py --dataset foci_cell --aug A --seed 42 --ckpt last path/to/ce
 
 ## MRFP paper ablations
 
-The current neck experiments use the same plain ViT backbone with **normal (dense) convolutions**. `plain-conv` uses channel-split 3 × 3 and 5 × 5 branches. `plain-conv-sac` adds learned dilation 1/3 switches inside those neck branches. `single-conv` uses one normal 3 × 3 per pyramid level with the same output projection. Every spatial branch uses `groups=1`. The scores above belong to the earlier experiments.
+The current neck experiments use the same plain ViT backbone with **normal (dense) convolutions**. `plain-conv` uses channel-split 3 × 3 and 5 × 5 branches. `plain-conv-sac` adds learned dilation 1/3 switches inside those neck branches. `single-conv` uses one normal 3 × 3 per pyramid level with the same output projection. Every spatial branch uses `groups=1`. These CoMer-style variants are separate from the original residual `full` neck evaluated in the new cell result above; the new result does not validate these variants.
 
 Preview the three-seed comparison on prepared FOCI data:
 
@@ -106,6 +127,6 @@ Remove `--dry-run` to train and evaluate. [Full ablation guide, checkpoint names
 
 The microscopy data and task definitions are credited to A. Singh et al., *Automatic Detection of Virus Infection Patterns in Foci Images Using Switchable Convolutions* (IEEE Access, 2024), and A. Singh and S. Mukherjee, [*Detection of Virus and Small Cell Patches in Foci Images Using Switchable Convolution and Feature Pyramid Networks*](https://arxiv.org/abs/2605.22290).
 
-Results are from Granth Agarwal's *A Vision Transformer YOLOv8 Framework with Switchable Atrous Convolution for Multi-Scale Object Detection* (November 2026), especially Tables 6–8. Earlier general detection experiments are archived in [VOC and African Wildlife benchmarks](docs/LEGACY_BENCHMARKS.md).
+Historical report results are from Granth Agarwal's *A Vision Transformer YOLOv8 Framework with Switchable Atrous Convolution for Multi-Scale Object Detection* (November 2026), especially Tables 6–8. Earlier general detection experiments are archived in [VOC and African Wildlife benchmarks](docs/LEGACY_BENCHMARKS.md).
 
 For separate cell notebook reproduction and existing FOCI settings, see [isolated run profiles](docs/ISOLATED_RUNS.md). Each profile uses separate checkpoint/log/report names without changing dataset preparation.

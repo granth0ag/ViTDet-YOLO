@@ -49,3 +49,7 @@ Inference accepts the same name:
 Advanced direct training supports `--lr-backbone`, `--num-workers`, and `--run-name`. Their defaults preserve the existing LR=3e-4, workers=4, and original filenames. `evaluate.py` also accepts `--run-name` and optional `--full-precision`.
 
 Matching code settings does not guarantee identical GPU results. Match input files, dependency versions, and checkpoint selection too. The reference notebook recorded timm 1.0.31, ultralytics 8.4.215, and torchmetrics 1.9.0. No packages are installed or changed by this launcher.
+
+## Recorded seed-42 result
+
+The completed cell profile has a [verified Kaggle version-42 result record](CELL_NOTEBOOK_RESULTS.md), including best/last metrics and environment versions. Seeds 43 and 44 have not been established by that record.
